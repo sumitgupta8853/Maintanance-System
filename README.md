@@ -136,7 +136,7 @@ ADMIN_PASSWORD=Admin@12345
 
 ---
 
-## Database Seeding
+## Database +ing
 
 ```bash
 npm run seed

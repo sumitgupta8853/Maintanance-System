@@ -59,6 +59,14 @@ const ticketSchema = new mongoose.Schema(
     closedAt: {
       type: Date
     },
+    escalationHours: {
+      type: Number,
+      default: 24
+    },
+    escalatedAt: {
+      type: Date,
+      default: null
+    },
     createdAt: {
       type: Date,
       default: Date.now

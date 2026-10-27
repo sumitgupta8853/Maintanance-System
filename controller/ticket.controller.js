@@ -23,9 +23,26 @@ async function recordFieldChange(ticketId, field, oldValue, newValue, changedBy,
 async function recordStatusChange(ticketId, oldStatus, newStatus, changedBy, note) {
   try {
     await TicketHistory.create({ ticketId, type: 'status', field: 'status', oldValue: oldStatus, newValue: newStatus, note, changedBy });
-  } catch (err) {
-    console.error('Ticket history status write failed:', err.message);
-  }
+  } catch (err) { console.error('Ticket history status write failed:', err.message); }
+}
+
+async function checkAndEscalateTicket(ticket) {
+  try {
+    if (!ticket) return ticket;
+    if (ticket.status !== 'open') return ticket;
+    if (ticket.escalatedAt) return ticket;
+    const ageInHours = (Date.now() - new Date(ticket.createdAt).getTime()) / (1000 * 60 * 60);
+    const threshold = ticket.escalationHours || 24;
+    if (ageInHours > threshold) {
+      const oldStatus = ticket.status;
+      ticket.status = 'urgent';
+      ticket.escalatedAt = new Date();
+      ticket.updatedAt = new Date();
+      await ticket.save();
+      await recordStatusChange(ticket._id, oldStatus, 'urgent', null, 'Auto-escalated due to age threshold');
+    }
+  } catch (err) { console.error('Escalation check failed:', err.message); }
+  return ticket;
 }
 
 export const getAllTickets = async (req, res, next) => {
@@ -40,9 +57,13 @@ export const getAllTickets = async (req, res, next) => {
       filter.$or = [...(filter.$or || []), { subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }];
     }
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const escalatedTickets = [];
+    for (const ticket of tickets) {
+      escalatedTickets.push(await checkAndEscalateTicket(ticket));
+    }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const getDepartmentTickets = async (req, res, next) => {
@@ -52,18 +73,23 @@ export const getDepartmentTickets = async (req, res, next) => {
     if (!user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
     const filter = { departmentId: user.departmentId, ...(status ? { status } : {}), ...(priority ? { priority } : {}) };
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const escalatedTickets = [];
+    for (const ticket of tickets) {
+      escalatedTickets.push(await checkAndEscalateTicket(ticket));
+    }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const getDepartmentTicket = async (req, res, next) => {
   try {
     const user = req.user;
     if (!user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
-    const ticket = await Ticket.findOne({ _id: req.params.id, departmentId: user.departmentId }).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('departmentId', 'name');
+    const ticket = await Ticket.findOne({ _id: req.params.id, departmentId: user.departmentId }).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found or out of scope' });
-    return res.json(ticket);
+    const escalated = await checkAndEscalateTicket(ticket);
+    return res.json(escalated);
   } catch (err) { next(err); }
 };
 export const assignTicket = async (req, res, next) => {
@@ -102,9 +128,13 @@ export const getTeamTickets = async (req, res, next) => {
     const { status, page = 1, limit = 10 } = req.query;
     const filter = { assignedTo: user._id, ...(status ? { status } : {}) };
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    const escalatedTickets = [];
+    for (const ticket of tickets) {
+      escalatedTickets.push(await checkAndEscalateTicket(ticket));
+    }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const updateStatus = async (req, res, next) => {
@@ -158,10 +188,11 @@ export const createTicket = async (req, res, next) => {
 export const getTicket = async (req, res, next) => {
   try {
     const user = req.user;
-    const ticket = await Ticket.findById(req.params.id).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('departmentId', 'name');
+    const ticket = await Ticket.findById(req.params.id).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
     if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
-    return res.json(ticket);
+    const escalated = await checkAndEscalateTicket(ticket);
+    return res.json(escalated);
   } catch (err) { next(err); }
 };
 export const editTicket = async (req, res, next) => {
