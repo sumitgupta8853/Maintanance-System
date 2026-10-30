@@ -8,7 +8,7 @@ import {
   me
 } from '../controller/auth.controller.js';
 
-import {authenticate} from '../middlewares/auth.js';
+import { authenticate } from '../middlewares/auth.js';
 
 const router = express.Router();
 

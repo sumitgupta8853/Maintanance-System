@@ -41,7 +41,7 @@ const ticketSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['open', 'assigned', 'in_progress', 'resolved', 'closed'],
+      enum: ['open', 'assigned', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold', 'resolved', 'closed', 'reopened'],
       default: 'open'
     },
     createdBy: {
@@ -58,6 +58,22 @@ const ticketSchema = new mongoose.Schema(
     },
     closedAt: {
       type: Date
+    },
+    faultDescription: {
+      type: String,
+      trim: true
+    },
+    resolutionType: {
+      type: String,
+      enum: ['fully_repaired', 'partially_repaired', 'part_missing', 'spare_part_required', 'fault_not_identified', 'additional_fault_found', 'repair_blocked', 'no_fault_found'],
+      default: null
+    },
+    partsRequired: {
+      type: {
+        partName: { type: String, trim: true },
+        quantity: { type: Number, min: 1 }
+      },
+      default: null
     },
     escalationHours: {
       type: Number,

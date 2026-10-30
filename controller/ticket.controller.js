@@ -7,9 +7,15 @@ import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
 import { auditLog } from '../utils/audit.js';
 
 const TEAM_MEMBER_ALLOWED_TRANSITIONS = {
-  assigned: ['in_progress'],
-  in_progress: ['resolved', 'in_progress'],
-  resolved: ['in_progress']
+  open: ['assigned', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
+  assigned: ['in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
+  in_progress: ['resolved', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold', 'open'],
+  partially_resolved: ['in_progress', 'waiting_for_parts', 'on_hold', 'resolved'],
+  waiting_for_parts: ['in_progress', 'on_hold', 'resolved'],
+  on_hold: ['in_progress', 'waiting_for_parts', 'resolved'],
+  resolved: ['closed'],
+  closed: ['reopened'],
+  reopened: ['in_progress', 'assigned']
 };
 
 async function recordFieldChange(ticketId, field, oldValue, newValue, changedBy, note) {
@@ -140,19 +146,57 @@ export const getTeamTickets = async (req, res, next) => {
 export const updateStatus = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, comment } = req.body;
+    const { status, comment, faultDescription, resolutionType, partsRequired } = req.body;
     if (!status) return res.status(400).json({ message: 'status is required' });
+
+    // Require faultDescription for specific statuses
+    const requiresFaultDescription = ['partially_resolved', 'waiting_for_parts', 'on_hold'].includes(status);
+    if (requiresFaultDescription && !faultDescription) {
+      return res.status(400).json({ message: `faultDescription is required when setting status to ${status}` });
+    }
+
     const ticket = await Ticket.findOne({ _id: req.params.id, assignedTo: user._id });
     if (!ticket) return res.status(404).json({ message: 'Ticket not found or not assigned to you' });
+
     const oldStatus = ticket.status;
     const allowed = TEAM_MEMBER_ALLOWED_TRANSITIONS[oldStatus];
     if (!allowed || !allowed.includes(status)) return res.status(400).json({ message: `Invalid transition from ${oldStatus} to ${status}` });
     if (status === 'closed') return res.status(400).json({ message: 'Use close endpoint to close a ticket' });
+
     ticket.status = status;
     ticket.updatedAt = new Date();
+
+    if (faultDescription !== undefined) ticket.faultDescription = faultDescription.trim();
+    if (resolutionType !== undefined) ticket.resolutionType = resolutionType;
+    if (partsRequired !== undefined) ticket.partsRequired = partsRequired;
+
     await ticket.save();
-    await recordStatusChange(ticket._id, oldStatus, status, user._id, comment || `Status changed to ${status}`);
-    await auditLog({ actor: user._id, action: 'ticket:update_status', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, oldStatus, newStatus: status, comment }, req });
+
+    const noteParts = [comment || `Status changed to ${status}`];
+    if (faultDescription) noteParts.push(`Fault: ${faultDescription}`);
+    if (partsRequired) noteParts.push(`Parts needed: ${partsRequired.partName} x${partsRequired.quantity}`);
+    if (resolutionType) noteParts.push(`Resolution: ${resolutionType}`);
+    await recordStatusChange(ticket._id, oldStatus, status, user._id, noteParts.join('; '));
+
+    await auditLog({
+      actor: user._id,
+      action: 'ticket:update_status',
+      target: ticket,
+      targetType: 'Ticket',
+      targetId: ticket._id,
+      outcome: 'success',
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        oldStatus,
+        newStatus: status,
+        comment,
+        faultDescription,
+        resolutionType,
+        partsRequired
+      },
+      req
+    });
+
     return res.json(ticket);
   } catch (err) { next(err); }
 };

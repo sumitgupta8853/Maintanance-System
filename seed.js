@@ -7,97 +7,97 @@ import Department from "./Models/Department.js";
 
 console.log("Seeding...");
 
+// Create the role if missing, otherwise add any missing permissions.
+async function upsertRole({ name, description, permissions, departmentId, isSystem = false }) {
+    let role = await Role.findOne({ name });
+
+    if (!role) {
+        const data = { name, description, permissions, isSystem };
+        if (departmentId) data.departmentId = departmentId; // omit instead of passing null
+        role = await Role.create(data);
+        console.log(`Created ${name} role`);
+        return role;
+    }
+
+    const merged = [...new Set([...role.permissions, ...permissions])];
+    if (merged.length !== role.permissions.length) {
+        role.permissions = merged;
+        await role.save();
+        console.log(`Updated ${name} role permissions`);
+    } else {
+        console.log(`Role already up to date: ${name}`);
+    }
+    return role;
+}
+
+async function upsertDepartment(name, description) {
+    let dept = await Department.findOne({ name });
+    if (!dept) {
+        dept = await Department.create({ name, description });
+        console.log(`Created ${name} department`);
+    }
+    return dept;
+}
+
 try {
     await connectDB();
 
     // --- Departments ---
-    let engDept = await Department.findOne({ name: "engineering" });
-    if (!engDept) {
-        engDept = await Department.create({ name: "engineering", description: "Engineering Department" });
-        console.log("Created engineering department");
-    }
-
-    let hrDept = await Department.findOne({ name: "human_resources" });
-    if (!hrDept) {
-        hrDept = await Department.create({ name: "human_resources", description: "Human Resources Department" });
-        console.log("Created human_resources department");
-    }
+    const engDept = await upsertDepartment("engineering", "Engineering Department");
+    await upsertDepartment("human_resources", "Human Resources Department");
 
     // --- Roles ---
     let adminRole = await Role.findOne({ name: "admin" });
     if (!adminRole) {
-        adminRole = await Role.create({ name: "admin", description: "Full access", permissions: ["*"], isSystem: true });
+        adminRole = await Role.create({
+            name: "admin",
+            description: "Full access",
+            permissions: ["*"],
+            isSystem: true,
+        });
         console.log("Created admin role");
-    } else {
-        if (!adminRole.permissions.includes("*")) {
-            adminRole.permissions = ["*"];
-            await adminRole.save();
-            console.log("Updated admin role permissions");
-        }
+    } else if (!adminRole.permissions.includes("*")) {
+        adminRole.permissions = ["*"];
+        await adminRole.save();
+        console.log("Updated admin role permissions");
     }
 
-    // technical_manager permissions
-    let techMgrRole = await Role.findOne({ name: "technical_manager" });
-    if (!techMgrRole) {
-        techMgrRole = await Role.create({
-            name: "technical_manager",
-            description: "Technical Manager",
-            permissions: ["ticket:view_department", "ticket:assign", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment", "users:create", "report:read"],
-            departmentId: engDept._id,
-            isSystem: false
-        });
-        console.log("Created technical_manager role");
-    } else {
-        const needed = ["ticket:view_department", "ticket:assign", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment", "users:create", "report:read"];
-        const missing = needed.filter((p) => !techMgrRole.permissions.includes(p));
-        if (missing.length > 0) {
-            techMgrRole.permissions = [...new Set([...techMgrRole.permissions, ...missing])];
-            await techMgrRole.save();
-            console.log("Updated technical_manager role permissions");
-        }
-    }
+    await upsertRole({
+        name: "technical_manager",
+        description: "Technical Manager",
+        permissions: [
+            "ticket:view_department", "ticket:assign", "ticket:close", "ticket:view",
+            "ticket:edit", "ticket:comment", "users:create", "report:read",
+        ],
+        departmentId: engDept._id,
+    });
 
-    // service_engineer permissions
-    let svcEngRole = await Role.findOne({ name: "service_engineer" });
-    if (!svcEngRole) {
-        svcEngRole = await Role.create({
-            name: "service_engineer",
-            description: "Service Engineer",
-            permissions: ["ticket:view_assigned", "ticket:update_status", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment"],
-            departmentId: engDept._id,
-            isSystem: false
-        });
-        console.log("Created service_engineer role");
-    } else {
-        const needed = ["ticket:view_assigned", "ticket:update_status", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment"];
-        const missing = needed.filter((p) => !svcEngRole.permissions.includes(p));
-        if (missing.length > 0) {
-            svcEngRole.permissions = [...new Set([...svcEngRole.permissions, ...missing])];
-            await svcEngRole.save();
-            console.log("Updated service_engineer role permissions");
-        }
-    }
+    await upsertRole({
+        name: "service_engineer",
+        description: "Service Engineer",
+        permissions: [
+            "ticket:view_assigned", "ticket:update_status", "ticket:close",
+            "ticket:view", "ticket:edit", "ticket:comment",
+        ],
+        departmentId: engDept._id,
+    });
 
-    // cc_executive permissions
-    let ccExecRole = await Role.findOne({ name: "cc_executive" });
-    if (!ccExecRole) {
-        ccExecRole = await Role.create({
-            name: "cc_executive",
-            description: "CC Executive",
-            permissions: ["ticket:create", "ticket:view", "ticket:edit", "ticket:comment"],
-            isSystem: false
-        });
-        console.log("Created cc_executive role");
-    } else {
-        const needed = ["ticket:create", "ticket:view", "ticket:edit", "ticket:comment"];
-        const missing = needed.filter((p) => !ccExecRole.permissions.includes(p));
-        if (missing.length > 0) {
-            ccExecRole.permissions = [...new Set([...ccExecRole.permissions, ...missing])];
-            await ccExecRole.save();
-            console.log("Updated cc_executive role permissions");
-        }
-    }
+    await upsertRole({
+        name: "cc_executive",
+        description: "CC Executive",
+        permissions: ["ticket:create", "ticket:view", "ticket:edit", "ticket:comment"],
+    });
 
+    await upsertRole({
+        name: "customer_support_manager",
+        description: "Customer Support Manager - full ticket lifecycle control",
+        permissions: [
+            "ticket:create", "ticket:view", "ticket:view_department", "ticket:assign",
+            "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment",
+        ],
+    });
+
+    // --- Admin user ---
     const email = (process.env.ADMIN_EMAIL || "admin@example.com").toLowerCase();
     if (await User.findOne({ email })) {
         console.log(`Admin user already exists: ${email}`);
@@ -111,7 +111,12 @@ try {
         console.log(`Created admin user: ${email}`);
     }
 } catch (err) {
-    console.error("Seed failed:", err.message);
+    console.error("Seed failed:", err);          // full error, incl. err.errors for validation
+    if (err.name === "ValidationError") {
+        for (const [field, e] of Object.entries(err.errors)) {
+            console.error(` - ${field}: ${e.message}`);
+        }
+    }
     process.exitCode = 1;
 } finally {
     await mongoose.disconnect();

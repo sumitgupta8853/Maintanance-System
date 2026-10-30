@@ -20,7 +20,7 @@ router.use(authenticate);
 // Admin (*) and Technical Manager (users:create) can create users
 router.route('/')
     .post(requirePermission('users:create'), createUser)
-    .get(requirePermission('users:read'), getUsers);
+    .get(requirePermission('users:view'), getUsers);
 
 router.route('/:id')
     .put(requirePermission('users:update'), updateUser)

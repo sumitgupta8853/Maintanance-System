@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { connectDB } from "./DB/DB.js";
+import { startHealthMonitor } from "./utils/healthMonitor.js";
 
 import { authRoutes } from "./routes/auth.Routes.js";
 import roleRoutes from "./routes/role.Routes.js";
@@ -41,9 +42,12 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({ message: err.message || "Server error" });
 });
 
-connectDB();
+connectDB().then(() => {
+    // Start auto ticket creation health monitor (every minute)
+    startHealthMonitor();
 
-const PORT = process.env.PORT || 6500;
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    const PORT = process.env.PORT || 6500;
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+    });
 });

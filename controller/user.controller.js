@@ -71,12 +71,29 @@ export const createUser = async (req, res, next) => {
 
 export const getUsers = async (req, res, next) => {
   try {
-    return res.json(
-      await User.find()
-        .sort({ name: 1 })
-        .populate('role')
-        .populate('departmentId')
-    );
+    // Admins can view all users; department managers can only view their own department users
+    if (req.user && req.user.role && req.user.role.name === 'admin') {
+      return res.json(
+        await User.find()
+          .sort({ name: 1 })
+          .populate('role')
+          .populate('departmentId')
+      );
+    }
+
+    // For other roles (e.g., technical_manager), filter by the user's department
+    const userDepartmentId = req.user?.departmentId;
+    if (userDepartmentId) {
+      return res.json(
+        await User.find({ departmentId: userDepartmentId })
+          .sort({ name: 1 })
+          .populate('role')
+          .populate('departmentId')
+      );
+    }
+
+    // If no department is set, return empty result
+    return res.json([]);
   } catch (err) {
     next(err);
   }

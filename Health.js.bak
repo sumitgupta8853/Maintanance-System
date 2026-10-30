@@ -1,0 +1,75 @@
+
+// Optional env: HEALTH_API_BASE, ALERT_POLL_SECONDS, ALERT_WEBHOOK_URL
+
+const BASE = (process.env.HEALTH_API_BASE || 'https://ocpphub.eeil.online/api/v1/technical/monitoring').replace(/\/+$/, '');
+const TOKEN = process.env.TECH_TOKEN || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MzI2MywibW9iaWxlX25vIjoiODQ0NzA4MDY3NiIsImRvbWFpbiI6ImVlaWwub25saW5lIiwidHlwZSI6InVzZXIiLCJpYXQiOjE3OTEzNTM1MDZ9.fmHkzsdkmGEt5Dnq0rKZQQcy2PdIbt-fd4WTdTNMC7Y';
+const POLL_MS = (Number(process.env.ALERT_POLL_SECONDS) || 60) * 1000;
+const WEBHOOK = process.env.ALERT_WEBHOOK_URL || '';
+
+async function call(path) {
+    const res = await fetch(BASE + path, { headers: { Authorization: 'Bearer ' + TOKEN } });
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* not JSON */ }
+    if (!res.ok) {
+        throw new Error(path + ' failed: ' + res.status + ' ' + ((body && body.message) || res.statusText));
+    }
+    return body.data;
+}
+
+async function check() {
+    const s = await call('/summary');
+    console.log('Generated at:', s.generatedAt);
+    console.table(s.summary);
+    console.log('\nCritical chargers (' + s.critical.length + '):');
+    s.critical.forEach((c) => {
+        console.log('- ' + c.chargerName + ' [' + c.ocppId + '] @ ' + c.stationName);
+        c.issues.forEach((i) => console.log('    ' + i));
+    });
+    const off = await call('/overview?online=false&limit=2000');
+    console.log('\nOffline chargers:', off.data.length);
+    off.data.slice(0, 20).forEach((c) => console.log('- ' + c.chargerName + ' (' + c.stationName + ') ' + c.severity));
+}
+
+async function notify(text) {
+    console.log('[ALERT] ' + text);
+    if (!WEBHOOK) return;
+    try {
+        await fetch(WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    } catch (e) { console.error('Webhook failed:', e.message); }
+}
+
+function alertLoop() {
+    const BAD = ['critical', 'high'];
+    let previous = null;
+    async function poll() {
+        try {
+            const o = await call('/overview?limit=2000');
+            const current = new Map(o.data.map((c) => [c.ocppId, c]));
+            if (previous) {
+                for (const [id, c] of current) {
+                    const was = previous.get(id);
+                    const nowBad = BAD.includes(c.severity);
+                    const wasBad = was && BAD.includes(was.severity);
+                    if (nowBad && !wasBad) {
+                        await notify(c.chargerName + ' (' + c.stationName + ') is ' + c.severity.toUpperCase() + ': ' + c.issues.join('; '));
+                    } else if (!nowBad && wasBad) {
+                        await notify(c.chargerName + ' (' + c.stationName + ') recovered (now ' + c.severity + ')');
+                    }
+                }
+            } else {
+                console.log('Baseline: ' + o.data.length + ' chargers. Watching for changes...');
+            }
+            previous = current;
+        } catch (e) { console.error('Poll failed:', e.message); }
+    }
+    poll();
+    setInterval(poll, POLL_MS);
+}
+
+if (!TOKEN) console.warn('TECH_TOKEN is empty - the API will return 401.');
+
+if (process.argv[2] === 'alert') {
+    alertLoop();
+} else {
+    check().catch((e) => { console.error(e.message); process.exit(1); });
+}
