@@ -455,7 +455,13 @@ export const assignTicket = async (req, res, next) => {
     if (ticket.status === 'resolved' || ticket.status === 'closed') return res.status(400).json({ message: `Cannot assign a ticket that is ${ticket.status}` });
     const assignee = await User.findById(assignedTo).populate('role');
     if (!assignee) return res.status(400).json({ message: 'Assignee not found' });
-    if (!assignee.departmentId || assignee.departmentId.toString() !== ticket.departmentId.toString()) return res.status(403).json({ message: 'Assignee must be in the same department' });
+    if (allAccess) {
+      // all-department users may assign to any service engineer or technical manager, in any department
+      const assigneeRole = assignee.role?.name;
+      if (!['service_engineer', 'technical_manager'].includes(assigneeRole)) return res.status(400).json({ message: 'Assignee must be a service_engineer or technical_manager' });
+    } else if (!assignee.departmentId || assignee.departmentId.toString() !== ticket.departmentId.toString()) {
+      return res.status(403).json({ message: 'Assignee must be in the same department' });
+    }
     const oldStatus = ticket.status;
     const oldAssignedTo = ticket.assignedTo;
     ticket.assignedTo = assignedTo;
