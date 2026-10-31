@@ -71,30 +71,45 @@ export const createUser = async (req, res, next) => {
 
 export const getUsers = async (req, res, next) => {
   try {
+    // Admin ('*') and roles with 'ticket:all_departments' (e.g. customer_support_manager) can view all users;
+    // other roles can only view their own department users
     const permissions = req.user?.role?.permissions || [];
     const seesAllUsers =
       req.user?.role?.name === 'admin' ||
       permissions.includes('*') ||
       permissions.includes('ticket:all_departments');
-
     if (seesAllUsers) {
+      // Optional filter: GET /api/users?departmentId=<id>
+      const { departmentId } = req.query;
+      if (departmentId && !/^[0-9a-fA-F]{24}$/.test(departmentId)) {
+        return res.status(400).json({ message: 'Invalid departmentId' });
+      }
       return res.json(
-        await User.find().sort({ name: 1 }).populate('role').populate('departmentId')
+        await User.find(departmentId ? { departmentId } : {})
+          .sort({ name: 1 })
+          .populate('role')
+          .populate('departmentId')
       );
     }
 
+    // For other roles (e.g., technical_manager), filter by the user's department
     const userDepartmentId = req.user?.departmentId;
     if (userDepartmentId) {
       return res.json(
         await User.find({ departmentId: userDepartmentId })
-          .sort({ name: 1 }).populate('role').populate('departmentId')
+          .sort({ name: 1 })
+          .populate('role')
+          .populate('departmentId')
       );
     }
+
+    // If no department is set, return empty result
     return res.json([]);
   } catch (err) {
     next(err);
   }
 };
+
 
 export const updateUser = async (req, res, next) => {
   try {
