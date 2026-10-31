@@ -94,7 +94,7 @@ try {
         permissions: [
             "ticket:create", "ticket:view", "ticket:view_department", "ticket:assign",
             "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment",
-            "ticket:all_departments"
+            "ticket:all_departments", "users:view"
         ],
     });
 
