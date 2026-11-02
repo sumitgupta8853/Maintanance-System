@@ -21,7 +21,8 @@
 //   CHARGER_TICKETS_ENABLED             "false" turns the job off
 //   ALERT_POLL_SECONDS                  check interval, default 60
 //   CHARGER_TICKET_SEVERITIES           default "critical,high"
-//   CHARGER_TICKET_MIN_BAD_MINUTES      charger must stay bad this long before a ticket is made (default 0)
+//   CHARGER_TICKET_CATEGORIES           default "active_issue" (skips long_offline / status_mismatch chargers)
+//   CHARGER_TICKET_MIN_BAD_MINUTES      charger must stay bad this long before a ticket is made (default 10)
 //   CHARGER_TICKET_MAX_PER_CYCLE        safety cap on new tickets / notes per check (default 25)
 //   CHARGER_TICKET_CLOSED_STATUSES      statuses that mean "finished" (default resolved,closed)
 //
@@ -38,12 +39,14 @@ const RECOVERY_NOTE =
 function readConfig() {
   const list = (v, d) => String(v || d).split(",").map((s) => s.trim()).filter(Boolean);
   return {
-    token: process.env.TECH_TOKEN || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MzI2MywibW9iaWxlX25vIjoiODQ0NzA4MDY3NiIsImRvbWFpbiI6ImVlaWwub25saW5lIiwiaWF0IjoxNzkyNjUwMjQzfQ.e2c85b8lvsA1xBAw1PU9vljTPJQojzAIH5nQLA9oMT0",
+    token: process.env.TECH_TOKEN || "",
     base: (process.env.HEALTH_API_BASE || "https://ocpphub.eeil.online/api/v1/technical/monitoring").replace(/\/+$/, ""),
     enabled: String(process.env.CHARGER_TICKETS_ENABLED || "true").toLowerCase() !== "false",
     intervalMs: (Number(process.env.ALERT_POLL_SECONDS) || 60) * 1000,
     severities: list(process.env.CHARGER_TICKET_SEVERITIES, "critical,high").map((s) => s.toLowerCase()),
-    minBadMs: (Number(process.env.CHARGER_TICKET_MIN_BAD_MINUTES) || 0) * 60000,
+    categories: list(process.env.CHARGER_TICKET_CATEGORIES, "active_issue").map((s) => s.toLowerCase()),
+    minBadMs: (process.env.CHARGER_TICKET_MIN_BAD_MINUTES === undefined || process.env.CHARGER_TICKET_MIN_BAD_MINUTES === ""
+      ? 10 : Number(process.env.CHARGER_TICKET_MIN_BAD_MINUTES) || 0) * 60000,
     maxPerCycle: Number(process.env.CHARGER_TICKET_MAX_PER_CYCLE) || 25,
     closed: list(process.env.CHARGER_TICKET_CLOSED_STATUSES, "resolved,closed"),
     departmentId: process.env.CHARGER_TICKET_DEPARTMENT_ID || "",
@@ -61,7 +64,16 @@ async function fetchOverview(cfg) {
   let body = null;
   try { body = await res.json(); } catch (e) { /* not JSON */ }
   if (!res.ok) throw new Error(`Health API ${res.status} ${(body && body.message) || res.statusText}`);
-  return body.data.data;
+  const d = body.data;
+  if (d.pagination && d.pagination.hasMore) {
+    throw new Error("Health API has more than 2000 chargers; raise the page limit before creating tickets (incomplete data)");
+  }
+  return { chargers: d.data, warnings: d.warnings || [] };
+}
+
+// A charger gets a ticket only when it is bad AND a real, current problem (not long-offline / stale label).
+function isTicketable(cfg, c) {
+  return cfg.severities.includes(c.severity) && cfg.categories.includes(c.category || "active_issue");
 }
 
 // charger ids that already have an open ticket (read from the "[ocpp:<id>]" tags)
@@ -107,11 +119,12 @@ async function findCreator(cfg, state) {
 function buildTicket(c, creator, departmentId) {
   const issues = (c.issues || []).join("; ") || "No specific issues reported";
   const sev = String(c.severity).toUpperCase();
+  const off = c.offlineFor ? ` Offline for ${c.offlineFor}.` : "";
   return {
     // full timestamp + random suffix: no repeats between tickets created close together
     ticketNumber: `AUTO-${Date.now()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`,
     subject: `Charger issue: ${c.chargerName} [${sev}]`,
-    description: `Charger ${c.chargerName} (${c.stationName}) has ${sev} severity: ${issues} [ocpp:${c.ocppId}]`,
+    description: `Charger ${c.chargerName} (${c.stationName}) has ${sev} severity: ${issues}.${off} [ocpp:${c.ocppId}]`,
     customerName: "Auto-detected",
     customerPhone: "",
     customerEmail: "",
@@ -155,7 +168,7 @@ async function noteRecoveries(cfg, openDocs, byId, result) {
     const m = /\[ocpp:([^\]]+)\]/.exec(d.description || "");
     if (!m) continue;
     const c = byId.get(m[1]);
-    if (!c || cfg.severities.includes(c.severity)) continue; // unknown or still bad
+    if (!c || isTicketable(cfg, c) || c.category === "long_offline") continue; // unknown, still bad, or still offline
     try {
       const exists = await TicketComment.findOne({ ticketId: d._id, comment: RECOVERY_NOTE }).lean();
       if (exists) continue;
@@ -170,13 +183,16 @@ async function noteRecoveries(cfg, openDocs, byId, result) {
 
 // One check. Returns what it did.
 async function runOnce(cfg, state) {
-  const result = { checked: 0, bad: 0, created: [], noted: [], deferred: 0 };
-  const chargers = await fetchOverview(cfg);
+  const result = { checked: 0, bad: 0, created: [], noted: [], deferred: 0, skipped: null };
+  const fetched = await fetchOverview(cfg);
+  // if the monitoring data is incomplete, do nothing: wrong data must never create or note tickets
+  if (fetched.warnings.length) { result.skipped = fetched.warnings.join("; "); return result; }
+  const chargers = fetched.chargers.filter((c) => c.ocppId);
   result.checked = chargers.length;
   const byId = new Map(chargers.map((c) => [c.ocppId, c]));
 
   const now = Date.now();
-  const bad = chargers.filter((c) => cfg.severities.includes(c.severity));
+  const bad = chargers.filter((c) => isTicketable(cfg, c));
   result.bad = bad.length;
 
   // remember since when each charger has been bad; forget the ones that recovered
@@ -203,7 +219,7 @@ async function runOnce(cfg, state) {
  * Start the health monitor. Call once, after the database connection is ready.
  */
 export function startHealthMonitor() {
-  const noop = { stop() {}, runNow: async () => null };
+  const noop = { stop() { }, runNow: async () => null };
   const cfg = readConfig();
   if (!cfg.enabled) { console.log("[HealthMonitor] disabled (CHARGER_TICKETS_ENABLED=false)"); return noop; }
   if (!cfg.token) { console.warn("[HealthMonitor] TECH_TOKEN not set - not started"); return noop; }
@@ -216,6 +232,7 @@ export function startHealthMonitor() {
     running = true;
     try {
       const r = await runOnce(cfg, state);
+      if (r.skipped) console.warn("[HealthMonitor] skipped this cycle: " + r.skipped);
       if (r.created.length) {
         console.log(`[HealthMonitor] created ${r.created.join(", ")}${r.deferred ? ` (${r.deferred} deferred to next cycle)` : ""}`);
       }
@@ -229,10 +246,8 @@ export function startHealthMonitor() {
     }
   }
 
-  console.log(`[HealthMonitor] Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}`);
+  console.log(`[HealthMonitor] Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}, categories ${cfg.categories.join(",")}, min bad ${cfg.minBadMs / 60000}m`);
   const first = setTimeout(tick, 5000); // small delay so the DB is ready
   const timer = setInterval(tick, cfg.intervalMs);
   return { stop() { clearTimeout(first); clearInterval(timer); }, runNow: tick };
 }
-
-//"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MzI2MywibW9iaWxlX25vIjoiODQ0NzA4MDY3NiIsImRvbWFpbiI6ImVlaWwub25saW5lIiwiaWF0IjoxNzkyNjUwMjQzfQ.e2c85b8lvsA1xBAw1PU9vljTPJQojzAIH5nQLA9oMT0",//
