@@ -1,34 +1,3 @@
-// jobs/healthMonitor.js  (ES module)
-// Creates tickets automatically for charger problems, inside the running backend.
-//
-// FLOW (matches the normal createTicket flow of the ticket system):
-//   1. A charger is critical/high  -> the job creates ONE ticket for it:
-//        status "open", departmentId = the department that handles chargers, createdBy = care manager,
-//        NOT assigned to anyone (the department's technical_manager assigns it, as for any ticket).
-//   2. technical_manager assigns -> engineer works it -> resolved -> closed   (existing ticket system)
-//   3. When the charger is healthy again the job adds ONE internal note on the open ticket
-//      ("charger is healthy again, please verify and close"). It never closes tickets itself.
-//
-// The ticket is tagged "[ocpp:<id>]" in its description: that is how the job knows a charger already
-// has an open ticket, so restarts and flapping chargers never create duplicates.
-//
-// ENV
-//   TECH_TOKEN                          required: technician JWT for the health API (job stays off without it)
-//   CHARGER_TICKET_DEPARTMENT_ID        _id of the Department that receives charger tickets (required, see below)
-//   CHARGER_TICKET_CREATOR_ID           optional: _id of the user shown as creator (skips the role lookup)
-//   CHARGER_TICKET_MANAGER_ROLE         role name used to find the creator (default customer_care_manager)
-//   HEALTH_API_BASE                     default https://ocpphub.eeil.online/api/v1/technical/monitoring
-//   CHARGER_TICKETS_ENABLED             "false" turns the job off
-//   ALERT_POLL_SECONDS                  check interval, default 60
-//   CHARGER_TICKET_SEVERITIES           default "critical,high"
-//   CHARGER_TICKET_CATEGORIES           default "active_issue" (skips long_offline / status_mismatch chargers)
-//   CHARGER_TICKET_MIN_BAD_MINUTES      charger must stay bad this long before a ticket is made (default 10)
-//   CHARGER_TICKET_MAX_PER_CYCLE        safety cap on new tickets / notes per check (default 25)
-//   CHARGER_TICKET_CLOSED_STATUSES      statuses that mean "finished" (default resolved,closed)
-//
-// departmentId is REQUIRED by the Ticket schema. If CHARGER_TICKET_DEPARTMENT_ID is not set, the creator's
-// own department is used; if that is empty too, no ticket is created (one clear error is logged).
-
 import Ticket from "../Models/Ticket.js";
 import User from "../Models/User.js";
 import TicketComment from "../Models/TicketComment.js";
@@ -48,6 +17,9 @@ function readConfig() {
     minBadMs: (process.env.CHARGER_TICKET_MIN_BAD_MINUTES === undefined || process.env.CHARGER_TICKET_MIN_BAD_MINUTES === ""
       ? 10 : Number(process.env.CHARGER_TICKET_MIN_BAD_MINUTES) || 0) * 60000,
     maxPerCycle: Number(process.env.CHARGER_TICKET_MAX_PER_CYCLE) || 25,
+    // after a ticket for a charger is closed, no new ticket for it during this time (0 = off)
+    cooldownMs: (process.env.CHARGER_TICKET_COOLDOWN_HOURS === undefined || process.env.CHARGER_TICKET_COOLDOWN_HOURS === ""
+      ? 2 : Number(process.env.CHARGER_TICKET_COOLDOWN_HOURS) || 0) * 3600000,
     closed: list(process.env.CHARGER_TICKET_CLOSED_STATUSES, "resolved,closed"),
     departmentId: process.env.CHARGER_TICKET_DEPARTMENT_ID || "",
     creatorId: process.env.CHARGER_TICKET_CREATOR_ID || process.env.CHARGER_TICKET_ASSIGNEE_ID || "",
@@ -60,6 +32,7 @@ const PRIORITY = { critical: "urgent", high: "high", medium: "medium", low: "low
 async function fetchOverview(cfg) {
   const res = await fetch(cfg.base + "/overview?limit=2000", {
     headers: { Authorization: "Bearer " + cfg.token },
+    signal: AbortSignal.timeout(30000), // a stuck request must not freeze the job forever
   });
   let body = null;
   try { body = await res.json(); } catch (e) { /* not JSON */ }
@@ -188,6 +161,12 @@ async function runOnce(cfg, state) {
   // if the monitoring data is incomplete, do nothing: wrong data must never create or note tickets
   if (fetched.warnings.length) { result.skipped = fetched.warnings.join("; "); return result; }
   const chargers = fetched.chargers.filter((c) => c.ocppId);
+  // Old Health API (no "category" field): every long-dead charger would look like a new problem and get a ticket.
+  // Never create tickets from that response.
+  if (chargers.length && !chargers.some((c) => c.category)) {
+    result.skipped = "Health API response has no category field (old version); deploy the updated monitoring first";
+    return result;
+  }
   result.checked = chargers.length;
   const byId = new Map(chargers.map((c) => [c.ocppId, c]));
 
@@ -208,7 +187,21 @@ async function runOnce(cfg, state) {
   const open = openChargerIds(openDocs);
 
   const due = bad.filter((c) => now - state.firstBad.get(c.ocppId) >= cfg.minBadMs);
-  const toCreate = due.filter((c) => !open.has(c.ocppId));
+  // chargers whose ticket was closed a moment ago: wait before opening another one
+  let cooling = new Set();
+  if (cfg.cooldownMs > 0) {
+    if (Ticket.schema && Ticket.schema.paths && Ticket.schema.paths.updatedAt) {
+      const recent = await Ticket.find({
+        description: { $regex: "\\[ocpp:" },
+        status: { $in: cfg.closed },
+        updatedAt: { $gte: new Date(now - cfg.cooldownMs) },
+      }).select("description").lean();
+      cooling = openChargerIds(recent);
+    } else {
+      warnOnce(state, "cooldown", "Ticket schema has no updatedAt field - cooldown after closing is disabled");
+    }
+  }
+  const toCreate = due.filter((c) => !open.has(c.ocppId) && !cooling.has(c.ocppId));
   if (toCreate.length) await createTickets(cfg, state, toCreate, result);
 
   await noteRecoveries(cfg, openDocs, byId, result);
@@ -246,7 +239,7 @@ export function startHealthMonitor() {
     }
   }
 
-  console.log(`[HealthMonitor] Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}, categories ${cfg.categories.join(",")}, min bad ${cfg.minBadMs / 60000}m`);
+  console.log(`[HealthMonitor] Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}, categories ${cfg.categories.join(",")}, min bad ${cfg.minBadMs / 60000}m, cooldown ${cfg.cooldownMs / 3600000}h`);
   const first = setTimeout(tick, 5000); // small delay so the DB is ready
   const timer = setInterval(tick, cfg.intervalMs);
   return { stop() { clearTimeout(first); clearInterval(timer); }, runNow: tick };
