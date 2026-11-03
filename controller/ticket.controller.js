@@ -341,6 +341,34 @@ const hasAllAccess = (user) => {
   return perms.includes('*') || perms.includes('ticket:all_departments');
 };
 
+// ?type=auto   -> only tickets created by the charger health job (ticket number starts with AUTO-)
+// ?type=normal -> only tickets created by people (everything else)
+// no type / type=all -> all tickets
+const applyTicketType = (filter, type) => {
+  const t = String(type || '').toLowerCase();
+  // tickets saved before the type field existed are recognised by the AUTO- ticket number
+  if (t === 'auto') filter.$and = [...(filter.$and || []), { $or: [{ type: 'auto' }, { ticketNumber: { $regex: '^AUTO-' } }] }];
+  else if (t === 'normal') filter.$and = [...(filter.$and || []), { type: { $ne: 'auto' }, ticketNumber: { $not: /^AUTO-/ } }];
+  return filter;
+};
+
+// ?recovered=true  -> only tickets whose charger is healthy again (the job left its recovery note)
+// ?recovered=false -> only tickets still waiting for the charger to recover
+const applyRecovered = (filter, recovered) => {
+  const r = String(recovered || '').toLowerCase();
+  if (r === 'true') filter.recoveredAt = { $ne: null };
+  else if (r === 'false') filter.recoveredAt = null;
+  return filter;
+};
+
+// Makes sure every ticket in the API response has type: "auto" | "normal" (also for tickets saved before the field existed).
+const withType = (ticket) => {
+  if (!ticket) return ticket;
+  const obj = typeof ticket.toObject === 'function' ? ticket.toObject() : { ...ticket };
+  obj.type = (obj.type === 'auto' || String(obj.ticketNumber || '').startsWith('AUTO-')) ? 'auto' : 'normal';
+  return obj;
+};
+
 const TEAM_MEMBER_ALLOWED_TRANSITIONS = {
   open: ['assigned', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
   assigned: ['in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
@@ -389,11 +417,13 @@ async function checkAndEscalateTicket(ticket) {
 export const getAllTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, departmentId, search, page = 1, limit = 10 } = req.query;
+    const { status, priority, departmentId, search, type, recovered, page = 1, limit = 10 } = req.query;
     const filter = ticketAccessFilter(user);
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (departmentId) filter.departmentId = departmentId;
+    applyTicketType(filter, type);
+    applyRecovered(filter, recovered);
     if (search) {
       filter.$and = [...(filter.$and || []), { $or: [{ subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }] }];
     }
@@ -404,19 +434,21 @@ export const getAllTickets = async (req, res, next) => {
       escalatedTickets.push(await checkAndEscalateTicket(ticket));
     }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets.map(withType), total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const getDepartmentTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, page = 1, limit = 10 } = req.query;
+    const { status, priority, type, recovered, page = 1, limit = 10 } = req.query;
     const allAccess = hasAllAccess(user);
     if (!allAccess && !user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
     const deptFilter = allAccess
       ? (req.query.departmentId ? { departmentId: req.query.departmentId } : {})
       : { departmentId: user.departmentId };
     const filter = { ...deptFilter, ...(status ? { status } : {}), ...(priority ? { priority } : {}) };
+    applyTicketType(filter, type);
+    applyRecovered(filter, recovered);
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
     const escalatedTickets = [];
@@ -424,7 +456,7 @@ export const getDepartmentTickets = async (req, res, next) => {
       escalatedTickets.push(await checkAndEscalateTicket(ticket));
     }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets.map(withType), total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const getDepartmentTicket = async (req, res, next) => {
@@ -435,7 +467,7 @@ export const getDepartmentTicket = async (req, res, next) => {
     const ticket = await Ticket.findOne({ _id: req.params.id, ...(allAccess ? {} : { departmentId: user.departmentId }) }).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found or out of scope' });
     const escalated = await checkAndEscalateTicket(ticket);
-    return res.json(escalated);
+    return res.json(withType(escalated));
   } catch (err) { next(err); }
 };
 export const assignTicket = async (req, res, next) => {
@@ -478,8 +510,10 @@ export const assignTicket = async (req, res, next) => {
 export const getTeamTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, page = 1, limit = 10 } = req.query;
+    const { status, type, recovered, page = 1, limit = 10 } = req.query;
     const filter = { assignedTo: user._id, ...(status ? { status } : {}) };
+    applyTicketType(filter, type);
+    applyRecovered(filter, recovered);
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
     const escalatedTickets = [];
@@ -487,7 +521,7 @@ export const getTeamTickets = async (req, res, next) => {
       escalatedTickets.push(await checkAndEscalateTicket(ticket));
     }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets: escalatedTickets, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ tickets: escalatedTickets.map(withType), total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) { next(err); }
 };
 export const updateStatus = async (req, res, next) => {
@@ -583,7 +617,7 @@ export const getTicket = async (req, res, next) => {
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
     if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const escalated = await checkAndEscalateTicket(ticket);
-    return res.json(escalated);
+    return res.json(withType(escalated));
   } catch (err) { next(err); }
 };
 export const editTicket = async (req, res, next) => {

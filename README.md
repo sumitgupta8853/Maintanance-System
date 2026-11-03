@@ -411,6 +411,7 @@ Centralized error handler in `index.js`:
 |--------|---------|-------------|
 | `dev` | `nodemon index.js` | Start development server with auto-reload |
 | `seed` | `node seed.js` | Seed database (admin role + admin user) |
+| `backfill` | `node scripts/backfillTicketType.js` | One-time backfill of `ticketType` (auto/normal) on existing tickets |
 
 ---
 

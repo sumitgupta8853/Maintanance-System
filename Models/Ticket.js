@@ -7,6 +7,12 @@ const ticketSchema = new mongoose.Schema(
       unique: true,
       required: true
     },
+    // "auto" = created by the charger health job, "normal" = created by a person
+    type: {
+      type: String,
+      enum: ['auto', 'normal'],
+      default: 'normal'
+    },
     subject: {
       type: String,
       required: true,
@@ -80,6 +86,11 @@ const ticketSchema = new mongoose.Schema(
       default: 24
     },
     escalatedAt: {
+      type: Date,
+      default: null
+    },
+    // set by the charger health job when the charger is healthy again (ticket still open); cleared if it goes bad again
+    recoveredAt: {
       type: Date,
       default: null
     },

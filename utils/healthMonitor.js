@@ -1,4 +1,5 @@
 import Ticket from "../Models/Ticket.js";
+import Department from "../Models/Department.js";
 import User from "../Models/User.js";
 import TicketComment from "../Models/TicketComment.js";
 
@@ -96,6 +97,7 @@ function buildTicket(c, creator, departmentId) {
   return {
     // full timestamp + random suffix: no repeats between tickets created close together
     ticketNumber: `AUTO-${Date.now()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`,
+    type: "auto",
     subject: `Charger issue: ${c.chargerName} [${sev}]`,
     description: `Charger ${c.chargerName} (${c.stationName}) has ${sev} severity: ${issues}.${off} [ocpp:${c.ocppId}]`,
     customerName: "Auto-detected",
@@ -120,6 +122,13 @@ async function createTickets(cfg, state, toCreate, result) {
     warnOnce(state, "dept", "no department for charger tickets - set CHARGER_TICKET_DEPARTMENT_ID (departmentId is required)");
     return;
   }
+  // the department must really exist, otherwise managers can neither see nor assign these tickets
+  let deptOk = false;
+  try { deptOk = !!(await Department.exists({ _id: departmentId })); } catch (e) { deptOk = false; }
+  if (!deptOk) {
+    warnOnce(state, "deptmissing", `department ${departmentId} does not exist - no tickets created. Set CHARGER_TICKET_DEPARTMENT_ID to a real department _id`);
+    return;
+  }
   const batch = toCreate.slice(0, cfg.maxPerCycle);
   result.deferred = toCreate.length - batch.length;
   for (const c of batch) {
@@ -133,23 +142,34 @@ async function createTickets(cfg, state, toCreate, result) {
   }
 }
 
-// Charger is fine again but its ticket is still open: leave ONE internal note, never close it.
+// Charger is fine again but its ticket is still open: mark the ticket (recoveredAt) and leave ONE internal note.
+// Never closes the ticket. If the charger goes bad again, the mark is removed so the filter stays correct.
 async function noteRecoveries(cfg, openDocs, byId, result) {
   let n = 0;
   for (const d of openDocs) {
-    if (n >= cfg.maxPerCycle) break;
     const m = /\[ocpp:([^\]]+)\]/.exec(d.description || "");
     if (!m) continue;
     const c = byId.get(m[1]);
-    if (!c || isTicketable(cfg, c) || c.category === "long_offline") continue; // unknown, still bad, or still offline
+    if (!c) continue; // unknown charger: leave the ticket as it is
     try {
+      if (isTicketable(cfg, c)) {
+        // bad again
+        if (d.recoveredAt) await Ticket.updateOne({ _id: d._id }, { $set: { recoveredAt: null } }, { timestamps: false });
+        continue;
+      }
+      if (c.category === "long_offline") continue; // still offline
+      if (d.recoveredAt) continue; // already marked
+      if (n >= cfg.maxPerCycle) break;
+      // note first, mark second: if the mark fails, the next cycle only repeats the mark (the note already exists)
       const exists = await TicketComment.findOne({ ticketId: d._id, comment: RECOVERY_NOTE }).lean();
-      if (exists) continue;
-      await TicketComment.create({ ticketId: d._id, author: d.createdBy, comment: RECOVERY_NOTE, isInternalNote: true });
-      result.noted.push(m[1]);
+      if (!exists) {
+        await TicketComment.create({ ticketId: d._id, author: d.createdBy, comment: RECOVERY_NOTE, isInternalNote: true });
+        result.noted.push(m[1]);
+      }
+      await Ticket.updateOne({ _id: d._id }, { $set: { recoveredAt: new Date() } }, { timestamps: false });
       n++;
     } catch (e) {
-      console.error(`[HealthMonitor] recovery note for ${m[1]} failed: ${e.message}`);
+      console.error(`[HealthMonitor] recovery update for ${m[1]} failed: ${e.message}`);
     }
   }
 }
@@ -183,7 +203,7 @@ async function runOnce(cfg, state) {
   const openDocs = await Ticket.find({
     description: { $regex: "\\[ocpp:" },
     status: { $nin: cfg.closed },
-  }).select("description createdBy").lean();
+  }).select("description createdBy recoveredAt").lean();
   const open = openChargerIds(openDocs);
 
   const due = bad.filter((c) => now - state.firstBad.get(c.ocppId) >= cfg.minBadMs);

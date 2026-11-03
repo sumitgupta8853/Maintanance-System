@@ -61,6 +61,37 @@ Content-Type: application/json
 | `POST` | `/:id/comments` | `ticket:comment` | Add comment |
 | `POST` | `/:id/close` | `ticket:close` | Close a resolved ticket |
 
+## Listing Filters
+
+All list endpoints (`GET /all`, `GET /manager`, `GET /team`) accept these optional query parameters. They are combined with your role-based scope filter:
+
+| Query param | Values | Description |
+|---|---|---|
+| `ticketType` | `auto`, `normal` | `auto` = tickets created by the charger health monitor; `normal` = manually created tickets |
+| `hasRecoveryNote` | `true`, `false` | `true` = tickets that have a health-monitor recovery note; `false` = tickets without one |
+
+Examples:
+
+```http
+# Auto-detected tickets only
+GET /all?ticketType=auto
+
+# Manually created tickets only
+GET /all?ticketType=normal
+
+# Tickets whose charger recovered (has a recovery note)
+GET /all?hasRecoveryNote=true
+
+# Combine with status
+GET /manager?ticketType=auto&status=open
+```
+
+Notes:
+- `ticketType` defaults to `normal` for manually created tickets. You can pass `ticketType: 'auto'` in the body of `POST /` to force-create an auto-typed ticket.
+- Auto tickets are created by the health monitor (`utils/healthMonitor.js`) with `ticketNumber` prefixed `AUTO-` and a `[ocpp:<id>]` tag.
+- Recovery notes are written by the health monitor when a previously critical/high charger recovers.
+- Existing tickets created before this field was added default to `normal`; run `node scripts/backfillTicketType.js` once to tag legacy `AUTO-…` tickets as `auto`.
+
 ## Route Ordering (Critical)
 
 Routes must be declared **in this order** — Express matches top-to-bottom:
