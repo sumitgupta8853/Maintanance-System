@@ -1,0 +1,286 @@
+{
+  "info": {
+    "name": "Maintenance System - Dashboard API",
+    "description": "Postman collection for the dashboard API. All dashboard endpoints require a valid Bearer JWT token. Run 'Login' first to obtain a token, which is automatically saved to the {{authToken}} variable.\n\nEndpoints:\n- GET /api/dashboard\n- GET /api/dashboard/summary\n- GET /api/dashboard/tickets/stats\n- GET /api/dashboard/tickets/priority\n- GET /api/dashboard/tickets/department\n- GET /api/dashboard/tickets/trend\n- GET /api/dashboard/recent\n- GET /api/dashboard/charger-health\n- GET /api/dashboard/engineers\n- GET /api/dashboard/activity",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "dashboard-api-collection"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string",
+      "description": "Base URL of the maintenance backend"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string",
+      "description": "JWT access token (populated after Login)"
+    }
+  ],
+  "item": [
+    {
+      "name": "Setup",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Admin@12345\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Authenticate and receive an access token. The test script saves it to {{authToken}} for use in all dashboard requests."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login successful\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData && jsonData.token) {",
+                  "    pm.collectionVariables.set(\"authToken\", jsonData.token);",
+                  "    console.log(\"Token saved: \" + jsonData.token);",
+                  "} else if (jsonData && jsonData.accessToken) {",
+                  "    pm.collectionVariables.set(\"authToken\", jsonData.accessToken);",
+                  "    console.log(\"Access token saved: \" + jsonData.accessToken);",
+                  "} else {",
+                  "    console.log(\"No token found in login response. Response:\", jsonData);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard (Composite)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard"]
+            },
+            "description": "Composite dashboard: all-status ticket counts, urgent count, and recent tickets."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Summary (KPI Counts)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "summary"]
+            },
+            "description": "KPI cards: counts of every ticket status (open, assigned, in_progress, partially_resolved, waiting_for_parts, on_hold, resolved, closed, reopened) plus total, urgent, active users, and departments."
+          },
+          "response": []
+        },
+        {
+          "name": "Ticket Stats by Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/tickets/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "tickets", "stats"]
+            },
+            "description": "Ticket count grouped by status (one row per status)."
+          },
+          "response": []
+        },
+        {
+          "name": "Ticket Stats by Priority",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/tickets/priority",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "tickets", "priority"]
+            },
+            "description": "Ticket count grouped by priority (low, medium, high, urgent)."
+          },
+          "response": []
+        },
+
+        {
+          "name": "Ticket Stats by Department",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/tickets/department",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "tickets", "department"]
+            },
+            "description": "Ticket count grouped by department."
+          },
+          "response": []
+        },
+        {
+          "name": "Ticket Creation Trend (30 Days)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/tickets/trend",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "tickets", "trend"]
+            },
+            "description": "Daily ticket creation trend for the last 30 days."
+          },
+          "response": []
+        },
+        {
+          "name": "Recent Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/recent?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "recent"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Most recent tickets with department and assignee names."
+          },
+          "response": []
+        },
+
+        {
+          "name": "Charger Health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/charger-health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "charger-health"]
+            },
+            "description": "Charger health summary from the external OCPP monitoring API."
+          },
+          "response": []
+        },
+        {
+          "name": "Tickets per Engineer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/engineers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "engineers"]
+            },
+            "description": "Tickets per assigned engineer (total, open, closed counts)."
+          },
+          "response": []
+        },
+        {
+          "name": "Recent Activity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/activity?limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "activity"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Recent audit-log activity."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+
