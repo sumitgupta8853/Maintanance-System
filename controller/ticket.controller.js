@@ -400,15 +400,14 @@ async function checkAndEscalateTicket(ticket) {
     if (!ticket) return ticket;
     if (ticket.status !== 'open') return ticket;
     if (ticket.escalatedAt) return ticket;
+    if (ticket.recoveredAt) return ticket; // charger already recovered, don't escalate
     const ageInHours = (Date.now() - new Date(ticket.createdAt).getTime()) / (1000 * 60 * 60);
     const threshold = ticket.escalationHours || 24;
     if (ageInHours > threshold) {
-      const oldStatus = ticket.status;
-      ticket.status = 'urgent';
+      ticket.priority = 'urgent';
       ticket.escalatedAt = new Date();
       ticket.updatedAt = new Date();
       await ticket.save();
-      await recordStatusChange(ticket._id, oldStatus, 'urgent', null, 'Auto-escalated due to age threshold');
     }
   } catch (err) { console.error('Escalation check failed:', err.message); }
   return ticket;

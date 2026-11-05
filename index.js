@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { connectDB } from "./DB/DB.js";
 import { startHealthMonitor } from "./utils/healthMonitor.js";
 
@@ -15,6 +16,7 @@ import dashboardRoutes from "./routes/dashboard.Routes.js";
 
 const app = express();
 app.use(express.json());
+app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 
 app.get("/", (req, res) => {
     res.send("Hello World!");

@@ -42,7 +42,7 @@ export const getDashboard = async (req, res, next) => {
       Ticket.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ]),
-      Ticket.countDocuments({ priority: 'urgent' }),
+      Ticket.countDocuments({ priority: 'urgent', status: { $nin: ['resolved', 'closed'] } }),
       Ticket.find()
         .sort({ createdAt: -1 })
         .limit(10)
@@ -84,7 +84,7 @@ export const getSummary = async (req, res, next) => {
         ]),
         User.countDocuments({ isActive: true }),
         Department.countDocuments({}),
-        Ticket.countDocuments({ priority: 'urgent' })
+        Ticket.countDocuments({ priority: 'urgent', status: { $nin: ['resolved', 'closed'] } })
       ]);
 
     const statusCounts = emptyStatusCounts();
