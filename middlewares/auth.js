@@ -1,6 +1,5 @@
-
-import jwt from 'jsonwebtoken';
 import User from '../Models/User.js';
+import { verifyAccessToken } from '../utils/Token.js';
 
 // Verify the Bearer token and attach the user to req.user
 export const authenticate = async (req, res, next) => {
@@ -13,28 +12,34 @@ export const authenticate = async (req, res, next) => {
     if (!token) {
       return res.status(401).json({
         message: 'Authentication required',
+        code: 'NO_TOKEN',
       });
     }
 
     let payload;
 
     try {
-      payload = jwt.verify(
-        token,
-        process.env.JWT_ACCESS_SECRET
-      );
-    } catch {
+      payload = verifyAccessToken(token);
+    } catch (err) {
       return res.status(401).json({
-        message: 'Invalid or expired token',
+        message:
+          err.name === 'TokenExpiredError'
+            ? 'Access token expired'
+            : 'Invalid token',
+        code:
+          err.name === 'TokenExpiredError'
+            ? 'TOKEN_EXPIRED'
+            : 'TOKEN_INVALID',
+
       });
     }
 
-    const user = await User.findById(payload.id)
-      .populate('role');
+    const user = await User.findById(payload.id).populate('role');
 
     if (!user || !user.isActive) {
       return res.status(401).json({
         message: 'User not found or deactivated',
+        code: 'USER_INACTIVE',
       });
     }
 
@@ -47,10 +52,18 @@ export const authenticate = async (req, res, next) => {
 
 // Allow only specified role names
 export const authorizeRoles = (...roles) => (req, res, next) => {
-  const roleName = req.user?.role?.name;
+  if (!req.user) {
+    return res.status(401).json({
+      message: 'Authentication required',
+      code: 'NO_TOKEN',
+    });
+  }
+
+  const roleName = req.user.role?.name;
 
   if (!roleName || !roles.includes(roleName)) {
     return res.status(403).json({
+
       message: 'Forbidden: insufficient role',
     });
   }
@@ -60,7 +73,14 @@ export const authorizeRoles = (...roles) => (req, res, next) => {
 
 // Check role permissions; "*" grants all permissions
 export const requirePermission = (...perms) => (req, res, next) => {
-  const granted = req.user?.role?.permissions || [];
+  if (!req.user) {
+    return res.status(401).json({
+      message: 'Authentication required',
+      code: 'NO_TOKEN',
+    });
+  }
+
+  const granted = req.user.role?.permissions || [];
 
   if (
     granted.includes('*') ||

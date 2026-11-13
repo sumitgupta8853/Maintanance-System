@@ -1,12 +1,15 @@
-
-import jwt from 'jsonwebtoken';
 import User from '../Models/User.js';
 import RefreshToken from '../Models/RefreshToken.js';
 import {
     hash,
     signAccessToken,
     issueRefreshToken,
+    verifyRefreshToken,
 } from '../utils/Token.js';
+
+// If a token was revoked less than this long ago, treat a second use as a
+// harmless concurrent request (e.g. two tabs), not as token theft.
+const REUSE_GRACE_MS = Number(process.env.REFRESH_REUSE_GRACE_MS) || 15 * 1000;
 
 const userPayload = (u) => ({
     id: u._id,
@@ -26,9 +29,7 @@ export const login = async (req, res, next) => {
             });
         }
 
-        const user = await User.findOne({
-            email: email.toLowerCase(),
-        })
+        const user = await User.findOne({ email: email.toLowerCase() })
             .select('+password')
             .populate('role');
 
@@ -65,35 +66,55 @@ export const refresh = async (req, res, next) => {
             });
         }
 
+        // 1. Verify signature and expiry
         let payload;
-
         try {
-            payload = jwt.verify(
-                refreshToken,
-                process.env.JWT_REFRESH_SECRET
-            );
+            payload = verifyRefreshToken(refreshToken);
         } catch {
             return res.status(401).json({
                 message: 'Invalid or expired refresh token',
             });
         }
 
-        // Consume the refresh token
-        const stored = await RefreshToken.findOneAndDelete({
-            tokenHash: hash(refreshToken),
-        });
+        const tokenHash = hash(refreshToken);
 
+        // 2. Atomically revoke the token. Only one concurrent request can win.
+        const stored = await RefreshToken.findOneAndUpdate(
+            { tokenHash, revokedAt: null },
+            { $set: { revokedAt: new Date() } }
+        );
+
+        // 3. Not active: decide between "unknown", "race", or "reuse"
         if (!stored) {
-            // A missing token may indicate reuse or revocation.
-            await RefreshToken.deleteMany({ user: payload.id });
+            const existing = await RefreshToken.findOne({ tokenHash });
 
+            // Unknown or already cleaned up (expired, logged out and purged)
+            if (!existing) {
+                return res.status(401).json({
+                    message: 'Invalid refresh token. Please log in again.',
+                });
+            }
+
+            const age = Date.now() - existing.revokedAt.getTime();
+
+            // Used a moment ago: most likely a concurrent request from the
+            // same client. Do not punish the user; client should retry with
+            // the newest token it received.
+            if (age <= REUSE_GRACE_MS) {
+                return res.status(409).json({
+                    message: 'Refresh already in progress. Retry shortly.',
+                });
+            }
+
+            // Used long ago and presented again: likely stolen token.
+            await RefreshToken.deleteMany({ user: existing.user });
             return res.status(401).json({
                 message: 'Refresh token reuse detected. Please log in again.',
             });
         }
 
-        const user = await User.findById(payload.id)
-            .populate('role');
+        // 4. Load the user from the DB record, not the JWT claim
+        const user = await User.findById(stored.user).populate('role');
 
         if (!user || !user.isActive) {
             return res.status(401).json({
@@ -101,6 +122,7 @@ export const refresh = async (req, res, next) => {
             });
         }
 
+        // 5. Issue the new pair
         return res.json({
             accessToken: signAccessToken(user),
             refreshToken: await issueRefreshToken(user),
@@ -116,9 +138,7 @@ export const logout = async (req, res, next) => {
         const { refreshToken } = req.body;
 
         if (refreshToken) {
-            await RefreshToken.deleteOne({
-                tokenHash: hash(refreshToken),
-            });
+            await RefreshToken.deleteOne({ tokenHash: hash(refreshToken) });
         }
 
         return res.json({ message: 'Logged out' });
@@ -130,13 +150,9 @@ export const logout = async (req, res, next) => {
 // Log out all devices
 export const logoutAll = async (req, res, next) => {
     try {
-        await RefreshToken.deleteMany({
-            user: req.user._id,
-        });
+        await RefreshToken.deleteMany({ user: req.user._id });
 
-        return res.json({
-            message: 'Logged out from all devices',
-        });
+        return res.json({ message: 'Logged out from all devices' });
     } catch (err) {
         next(err);
     }
