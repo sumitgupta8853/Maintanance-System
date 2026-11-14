@@ -13,7 +13,6 @@ const deviceTokenSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      index: true,
     },
     deviceId: {
       type: String,
@@ -53,8 +52,15 @@ const deviceTokenSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// One active token per (user, deviceId) combination - re-registration updates the token
-deviceTokenSchema.index({ user: 1, deviceId: 1 }, { unique: true, partialFilterExpression: { isActive: true } });
+// One active token per (user, deviceId). Only applies when deviceId is a real string,
+// so tokens registered without a deviceId no longer collide with each other.
+deviceTokenSchema.index(
+  { user: 1, deviceId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isActive: true, deviceId: { $type: 'string' } },
+  }
+);
 
 const DeviceToken = mongoose.model('DeviceToken', deviceTokenSchema);
 
