@@ -3,16 +3,17 @@ import User from '../Models/User.js';
 import Role from '../Models/Role.js';
 import Department from '../Models/Department.js';
 import { auditLog } from '../utils/audit.js';
+import { logger } from '../utils/logger.js';
 
 const PRIVILEGED_ROLES = ['admin', 'technical_manager'];
 
 export const createUser = async (req, res, next) => {
   try {
     const { name, email, password, role, departmentId } = req.body;
-    console.log('Create User Request Body:', req.body);
+    logger.info('Create User Request Body:', req.body);
     // Validate role ID exists in MongoDB
     const targetRole = await Role.findById(role);
-    console.log('Target Role:', targetRole);
+    logger.info('Target Role:', targetRole);
     if (!targetRole) {
       return res.status(400).json({ message: 'Invalid role ID' });
     }

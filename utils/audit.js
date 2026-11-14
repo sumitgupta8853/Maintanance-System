@@ -1,4 +1,5 @@
 import AuditLog from '../Models/AuditLog.js';
+import { logger } from './logger.js';
 
 export const auditLog = async ({
   actor,
@@ -23,6 +24,6 @@ export const auditLog = async ({
     });
   } catch (err) {
     // Audit logging must never break the main request flow
-    console.error('Audit log failed:', err.message);
+    logger.error({ err }, 'Audit log failed');
   }
 };

@@ -2,6 +2,7 @@ import Ticket from "../Models/Ticket.js";
 import Department from "../Models/Department.js";
 import User from "../Models/User.js";
 import TicketComment from "../Models/TicketComment.js";
+import { logger } from "./logger.js";
 
 const RECOVERY_NOTE =
   "Auto-check: this charger is healthy again (no longer critical/high). Please verify and close the ticket.";
@@ -65,7 +66,7 @@ function openChargerIds(docs) {
 function warnOnce(state, key, msg) {
   if (state.warned.has(key)) return;
   state.warned.add(key);
-  console.error("[HealthMonitor] " + msg);
+  logger.warn({ component: "HealthMonitor" }, msg);
 }
 
 // Who is shown as the ticket creator.
@@ -137,7 +138,7 @@ async function createTickets(cfg, state, toCreate, result) {
       result.created.push(t.ticketNumber);
     } catch (e) {
       // one failed ticket must not stop the others
-      console.error(`[HealthMonitor] ticket for ${c.chargerName} failed: ${e.message}`);
+      logger.error({ component: "HealthMonitor" }, `ticket for ${c.chargerName} failed: ${e.message}`);
     }
   }
 }
@@ -169,7 +170,7 @@ async function noteRecoveries(cfg, openDocs, byId, result) {
       await Ticket.updateOne({ _id: d._id }, { $set: { recoveredAt: new Date() } }, { timestamps: false });
       n++;
     } catch (e) {
-      console.error(`[HealthMonitor] recovery update for ${m[1]} failed: ${e.message}`);
+      logger.error({ component: "HealthMonitor" }, `recovery update for ${m[1]} failed: ${e.message}`);
     }
   }
 }
@@ -234,8 +235,8 @@ async function runOnce(cfg, state) {
 export function startHealthMonitor() {
   const noop = { stop() { }, runNow: async () => null };
   const cfg = readConfig();
-  if (!cfg.enabled) { console.log("[HealthMonitor] disabled (CHARGER_TICKETS_ENABLED=false)"); return noop; }
-  if (!cfg.token) { console.warn("[HealthMonitor] TECH_TOKEN not set - not started"); return noop; }
+  if (!cfg.enabled) { logger.info({ component: "HealthMonitor" }, "disabled (CHARGER_TICKETS_ENABLED=false)"); return noop; }
+  if (!cfg.token) { logger.warn({ component: "HealthMonitor" }, "TECH_TOKEN not set - not started"); return noop; }
 
   const state = { firstBad: new Map(), warned: new Set() };
   let running = false;
@@ -245,21 +246,21 @@ export function startHealthMonitor() {
     running = true;
     try {
       const r = await runOnce(cfg, state);
-      if (r.skipped) console.warn("[HealthMonitor] skipped this cycle: " + r.skipped);
+      if (r.skipped) logger.warn({ component: "HealthMonitor" }, "skipped this cycle: " + r.skipped);
       if (r.created.length) {
-        console.log(`[HealthMonitor] created ${r.created.join(", ")}${r.deferred ? ` (${r.deferred} deferred to next cycle)` : ""}`);
+        logger.info({ component: "HealthMonitor" }, `created ${r.created.join(", ")}${r.deferred ? ` (${r.deferred} deferred to next cycle)` : ""}`);
       }
-      if (r.noted.length) console.log(`[HealthMonitor] recovery note added for ${r.noted.join(", ")}`);
+      if (r.noted.length) logger.info({ component: "HealthMonitor" }, `recovery note added for ${r.noted.join(", ")}`);
       return r;
     } catch (e) {
-      console.error("[HealthMonitor] check failed:", e.message);
+      logger.error({ component: "HealthMonitor", err: e }, "check failed");
       return null;
     } finally {
       running = false;
     }
   }
 
-  console.log(`[HealthMonitor] Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}, categories ${cfg.categories.join(",")}, min bad ${cfg.minBadMs / 60000}m, cooldown ${cfg.cooldownMs / 3600000}h`);
+  logger.info({ component: "HealthMonitor" }, `Starting: every ${cfg.intervalMs / 1000}s, severities ${cfg.severities.join(",")}, categories ${cfg.categories.join(",")}, min bad ${cfg.minBadMs / 60000}m, cooldown ${cfg.cooldownMs / 3600000}h`);
   const first = setTimeout(tick, 5000); // small delay so the DB is ready
   const timer = setInterval(tick, cfg.intervalMs);
   return { stop() { clearTimeout(first); clearInterval(timer); }, runNow: tick };

@@ -2,6 +2,7 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import { connectDB } from "../DB/DB.js";
 import Ticket from "../Models/Ticket.js";
+import { logger } from "../utils/logger.js";
 
 /**
  * One-time backfill: tag existing tickets as 'auto' or 'normal'.
@@ -37,15 +38,15 @@ async function backfill() {
     { $group: { _id: { $ifNull: ["$ticketType", "normal"] }, count: { $sum: 1 } } },
   ]);
 
-  console.log("Backfill complete:");
-  console.log(" - auto tickets tagged:", autoTickets.modifiedCount);
-  console.log(" - missing ticketType set to 'normal':", normalTickets.modifiedCount);
-  console.log(" - current totals:", totals);
+  logger.info("Backfill complete:");
+  logger.info(" - auto tickets tagged:", autoTickets.modifiedCount);
+  logger.info(" - missing ticketType set to 'normal':", normalTickets.modifiedCount);
+  logger.info(" - current totals:", totals);
 
   await mongoose.disconnect();
 }
 
 backfill().catch((err) => {
-  console.error("Backfill failed:", err);
+  logger.error("Backfill failed:", err);
   process.exitCode = 1;
 });

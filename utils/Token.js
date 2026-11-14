@@ -17,7 +17,7 @@ export const signAccessToken = (user) =>
         process.env.JWT_ACCESS_SECRET,
         {
             algorithm: ALGORITHM,
-            expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || '15m',
+            expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || '1m',
         }
     );
 

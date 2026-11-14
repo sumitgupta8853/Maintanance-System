@@ -22,6 +22,8 @@ let Ticket = null;
 let User = null;
 let warnedNoManager = false;
 
+import { logger } from './utils/logger.js';
+
 /**
  * Connect to MongoDB and load the project models.
  * If anything fails, ticket creation is disabled but alerts keep working.
@@ -37,11 +39,11 @@ async function initModels() {
         const userModel = require('./Models/User.js');
         User = userModel.default || userModel;
 
-        console.log('Models initialized successfully');
+        logger.info('Models initialized successfully');
     } catch (e) {
         Ticket = null;
         User = null;
-        console.error('Ticket creation disabled (alerts still run): ' + e.message);
+        logger.error('Ticket creation disabled (alerts still run): ' + e.message);
     }
 }
 
@@ -61,24 +63,24 @@ async function call(path) {
 
 async function check() {
     const s = await call('/summary');
-    console.log('Generated at:', s.generatedAt);
-    console.table(s.summary);
-    console.log('\nCritical chargers (' + s.critical.length + '):');
+    logger.info('Generated at: ' + s.generatedAt);
+    logger.info('Summary:', s.summary);
+    logger.info('Critical chargers (' + s.critical.length + '):');
     s.critical.forEach((c) => {
-        console.log('- ' + c.chargerName + ' [' + c.ocppId + '] @ ' + c.stationName);
-        c.issues.forEach((i) => console.log('    ' + i));
+        logger.info('- ' + c.chargerName + ' [' + c.ocppId + '] @ ' + c.stationName);
+        c.issues.forEach((i) => logger.info('    ' + i));
     });
     const off = await call('/overview?online=false&limit=2000');
-    console.log('\nOffline chargers:', off.data.length);
-    off.data.slice(0, 20).forEach((c) => console.log('- ' + c.chargerName + ' (' + c.stationName + ') ' + c.severity));
+    logger.info('Offline chargers: ' + off.data.length);
+    off.data.slice(0, 20).forEach((c) => logger.info('- ' + c.chargerName + ' (' + c.stationName + ') ' + c.severity));
 }
 
 async function notify(text) {
-    console.log('[ALERT] ' + text);
+    logger.info('[ALERT] ' + text);
     if (!WEBHOOK) return;
     try {
         await fetch(WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
-    } catch (e) { console.error('Webhook failed:', e.message); }
+    } catch (e) { logger.error('Webhook failed: ' + e.message); }
 }
 
 /**
@@ -89,7 +91,7 @@ async function notify(text) {
 async function createTicketForCharger(charger) {
     try {
         if (!Ticket || !User) {
-            console.error('Ticket models not loaded - skipping ticket for ' + charger.chargerName);
+            logger.error('Ticket models not loaded - skipping ticket for ' + charger.chargerName);
             return null;
         }
 
@@ -101,14 +103,14 @@ async function createTicketForCharger(charger) {
             status: { $nin: CLOSED_STATUSES }
         });
         if (existing) {
-            console.log('Open ticket #' + existing.ticketNumber + ' already exists for ' + charger.chargerName + ' - not creating another');
+            logger.info('Open ticket #' + existing.ticketNumber + ' already exists for ' + charger.chargerName + ' - not creating another');
             return existing;
         }
 
         const supportManager = await User.findOne({ 'role.name': 'customer_support_manager' });
         if (!supportManager) {
             if (!warnedNoManager) {
-                console.error('Customer support manager not found - cannot create tickets');
+                logger.error('Customer support manager not found - cannot create tickets');
                 warnedNoManager = true;
             }
             return null;
@@ -138,10 +140,10 @@ async function createTicketForCharger(charger) {
             resolutionType: null
         });
 
-        console.log('Auto-created ticket #' + ticket.ticketNumber + ' for ' + charger.chargerName + ' (' + priority + ')');
+        logger.info('Auto-created ticket #' + ticket.ticketNumber + ' for ' + charger.chargerName + ' (' + priority + ')');
         return ticket;
     } catch (err) {
-        console.error('Failed to create ticket for ' + charger.chargerName + ':', err.message);
+        logger.error('Failed to create ticket for ' + charger.chargerName + ': ' + err.message);
         return null;
     }
 }
@@ -154,7 +156,7 @@ function alertLoop() {
             const o = await call('/overview?limit=2000');
             const current = new Map(o.data.map((c) => [c.ocppId, c]));
             if (!previous) {
-                console.log('Baseline: ' + o.data.length + ' chargers. Watching for changes...');
+                logger.info('Baseline: ' + o.data.length + ' chargers. Watching for changes...');
                 if (TICKET_ON_START) {
                     for (const c of current.values()) {
                         if (BAD.includes(c.severity)) await createTicketForCharger(c);
@@ -174,19 +176,19 @@ function alertLoop() {
                 }
             }
             previous = current;
-        } catch (e) { console.error('Poll failed:', e.message); }
+        } catch (e) { logger.error('Poll failed: ' + e.message); }
     }
     poll();
     setInterval(poll, POLL_MS);
 }
 
 if (!TOKEN) {
-    console.error('TECH_TOKEN is required. Set it as an environment variable (do not put it in the code).');
+    logger.error('TECH_TOKEN is required. Set it as an environment variable (do not put it in the code).');
     process.exit(1);
 }
 
 if (process.argv[2] === 'alert') {
     initModels().then(alertLoop);
 } else {
-    check().catch((e) => { console.error(e.message); process.exit(1); });
+    check().catch((e) => { logger.error(e.message); process.exit(1); });
 }

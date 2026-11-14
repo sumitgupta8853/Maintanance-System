@@ -14,6 +14,7 @@
 //   MONITORING_CACHE_SECONDS   default 30 (many people opening the page = one call to the hub)
 import { Router } from "express";
 import { authenticate } from "../middlewares/auth.js";
+import { logger } from "../utils/logger.js";
 
 const cfg = () => ({
   base: (process.env.HEALTH_API_BASE || "https://ocpphub.eeil.online/api/v1/technical/monitoring").replace(/\/+$/, ""),
@@ -67,10 +68,10 @@ async function forward(req, res, path, allowedQuery) {
     }
     if (status === 400 || status === 404) return res.status(status).json({ message: (body && body.message) || "Request not accepted" });
     // 401/403/5xx from the hub: never pass 401 on, the browser would think the engineer's own login expired
-    console.error(`[Monitoring] hub answered ${status} for ${path}${status === 401 || status === 403 ? " - check TECH_TOKEN" : ""}`);
+    logger.error({ component: "Monitoring" }, `hub answered ${status} for ${path}${status === 401 || status === 403 ? " - check TECH_TOKEN" : ""}`);
     return res.status(502).json({ message: "Monitoring service is unavailable" });
   } catch (e) {
-    console.error(`[Monitoring] hub call failed for ${path}: ${e.message}`);
+    logger.error({ component: "Monitoring", err: e }, `hub call failed for ${path}: ${e.message}`);
     return res.status(e.name === "TimeoutError" ? 504 : 502).json({ message: "Monitoring service is unavailable" });
   }
 }

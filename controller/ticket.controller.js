@@ -334,6 +334,7 @@ import User from '../Models/User.js';
 import Department from '../Models/Department.js';
 import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
 import { auditLog } from '../utils/audit.js';
+import { logger } from '../utils/logger.js';
 
 // Admin ('*') and any role with 'ticket:all_departments' can act on tickets in every department.
 const hasAllAccess = (user) => {
@@ -385,14 +386,14 @@ async function recordFieldChange(ticketId, field, oldValue, newValue, changedBy,
   try {
     await TicketHistory.create({ ticketId, type: 'field', field, oldValue, newValue, note, changedBy });
   } catch (err) {
-    console.error('Ticket history field write failed:', err.message);
+    logger.error('Ticket history field write failed:', err.message);
   }
 }
 
 async function recordStatusChange(ticketId, oldStatus, newStatus, changedBy, note) {
   try {
     await TicketHistory.create({ ticketId, type: 'status', field: 'status', oldValue: oldStatus, newValue: newStatus, note, changedBy });
-  } catch (err) { console.error('Ticket history status write failed:', err.message); }
+  } catch (err) { logger.error('Ticket history status write failed:', err.message); }
 }
 
 async function checkAndEscalateTicket(ticket) {
@@ -409,7 +410,7 @@ async function checkAndEscalateTicket(ticket) {
       ticket.updatedAt = new Date();
       await ticket.save();
     }
-  } catch (err) { console.error('Escalation check failed:', err.message); }
+  } catch (err) { logger.error('Escalation check failed:', err.message); }
   return ticket;
 }
 
@@ -708,3 +709,4 @@ export const closeTicket = async (req, res, next) => {
     return res.json(ticket);
   } catch (err) { next(err); }
 };
+

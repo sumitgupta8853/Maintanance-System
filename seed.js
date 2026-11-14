@@ -4,8 +4,9 @@ import { connectDB } from "./DB/DB.js";
 import Role from "./Models/Role.js";
 import User from "./Models/User.js";
 import Department from "./Models/Department.js";
+import { logger } from "./utils/logger.js";
 
-console.log("Seeding...");
+logger.info("Seeding...");
 
 // Create the role if missing, otherwise add any missing permissions.
 async function upsertRole({ name, description, permissions, departmentId, isSystem = false }) {
@@ -15,7 +16,7 @@ async function upsertRole({ name, description, permissions, departmentId, isSyst
         const data = { name, description, permissions, isSystem };
         if (departmentId) data.departmentId = departmentId; // omit instead of passing null
         role = await Role.create(data);
-        console.log(`Created ${name} role`);
+        logger.info(`Created ${name} role`);
         return role;
     }
 
@@ -23,9 +24,9 @@ async function upsertRole({ name, description, permissions, departmentId, isSyst
     if (merged.length !== role.permissions.length) {
         role.permissions = merged;
         await role.save();
-        console.log(`Updated ${name} role permissions`);
+        logger.info(`Updated ${name} role permissions`);
     } else {
-        console.log(`Role already up to date: ${name}`);
+        logger.info(`Role already up to date: ${name}`);
     }
     return role;
 }
@@ -34,7 +35,7 @@ async function upsertDepartment(name, description) {
     let dept = await Department.findOne({ name });
     if (!dept) {
         dept = await Department.create({ name, description });
-        console.log(`Created ${name} department`);
+        logger.info(`Created ${name} department`);
     }
     return dept;
 }
@@ -55,11 +56,11 @@ try {
             permissions: ["*"],
             isSystem: true,
         });
-        console.log("Created admin role");
+        logger.info("Created admin role");
     } else if (!adminRole.permissions.includes("*")) {
         adminRole.permissions = ["*"];
         await adminRole.save();
-        console.log("Updated admin role permissions");
+        logger.info("Updated admin role permissions");
     }
 
     await upsertRole({
@@ -101,7 +102,7 @@ try {
     // --- Admin user ---
     const email = (process.env.ADMIN_EMAIL || "admin@example.com").toLowerCase();
     if (await User.findOne({ email })) {
-        console.log(`Admin user already exists: ${email}`);
+        logger.info(`Admin user already exists: ${email}`);
     } else {
         await User.create({
             name: process.env.ADMIN_NAME || "Super Admin",
@@ -109,13 +110,13 @@ try {
             password: process.env.ADMIN_PASSWORD || "Admin@12345",
             role: adminRole._id,
         });
-        console.log(`Created admin user: ${email}`);
+        logger.info(`Created admin user: ${email}`);
     }
 } catch (err) {
-    console.error("Seed failed:", err);          // full error, incl. err.errors for validation
+    logger.error({ err }, "Seed failed");
     if (err.name === "ValidationError") {
         for (const [field, e] of Object.entries(err.errors)) {
-            console.error(` - ${field}: ${e.message}`);
+            logger.error(` - ${field}: ${e.message}`);
         }
     }
     process.exitCode = 1;
