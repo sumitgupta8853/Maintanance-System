@@ -146,7 +146,7 @@ The seeder:
 
 1. Connects to MongoDB.
 2. Ensures the `admin` role exists with `["*"]` (wildcard/full access) and `isSystem: true`.
-3. Ensures the `technical_manager` role exists with `["users:create", "report:read"]`.
+3. Ensures the `technical_manager` role exists with ticket permissions (`ticket:view_department`, `ticket:assign`, `ticket:close`, `ticket:reopen`, `ticket:view`, etc.) plus `users:create`, `report:read`, `role:view`, `department:view`.
 4. Creates the default admin user from `ADMIN_*` env vars if one does not already exist.
 5. Disconnects from the database.
 
@@ -191,9 +191,9 @@ Permissions are stored on the `Role` model as a string array (`permissions: [Str
 | Role | Permissions | System? |
 |------|-------------|---------|
 | `admin` | `["*"]` | Yes |
-| `technical_manager` | `["users:create", "report:read"]` | No |
-| `service_engineer` | `["report:read"]` | No |
-| `customer_care_manager` | `["report:read"]` | No |
+| `technical_manager` | `["ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view", "ticket:edit", "ticket:comment", "users:create", "report:read", "role:view", "department:view"]` | No |
+| `service_engineer` | `["ticket:view_assigned", "ticket:update_status", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment"]` | No |
+| `customer_care_manager` | `["ticket:create", "ticket:view", "ticket:view_department", "ticket:assign", "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment", "ticket:all_departments", "users:view"]` | No |
 
 ### Route Protection Matrix
 

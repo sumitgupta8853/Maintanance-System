@@ -1,5 +1,6 @@
 import { logger } from './logger.js';
 import DeviceToken from '../Models/DeviceToken.js';
+import User from '../Models/User.js';
 
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -263,3 +264,161 @@ export function getFCMError() {
 }
 
 export { fcmInitError };
+
+/**
+ * Build the standard push payload for a ticket event.
+ */
+function ticketPayload(ticket, eventType, actorName = 'System') {
+  const base = {
+    ticketId: ticket._id.toString(),
+    ticketNumber: ticket.ticketNumber,
+    event: eventType,
+    deepLink: `/tickets/${ticket.ticketNumber}`,
+  };
+
+  const messages = {
+    ticket_created: {
+      title: 'New Ticket Created',
+      body: `Ticket #${ticket.ticketNumber}: ${ticket.subject}`,
+    },
+    ticket_assigned: {
+      title: 'Ticket Assigned to You',
+      body: `Ticket #${ticket.ticketNumber} (${ticket.subject}) has been assigned to you`,
+    },
+    ticket_status_updated: {
+      title: 'Ticket Status Updated',
+      body: `Ticket #${ticket.ticketNumber} status changed`,
+    },
+    ticket_commented: {
+      title: 'New Comment on Ticket',
+      body: `New comment on ticket #${ticket.ticketNumber} (${ticket.subject})`,
+    },
+    ticket_closed: {
+      title: 'Ticket Closed',
+      body: `Ticket #${ticket.ticketNumber} (${ticket.subject}) has been closed`,
+    },
+  };
+
+  return {
+    ...base,
+    ...(messages[eventType] || { title: 'Ticket Update', body: `Ticket #${ticket.ticketNumber}` }),
+    actor: actorName,
+  };
+}
+
+/**
+ * Determine which users should be notified for a given ticket event.
+ * Returns an array of unique user ObjectIds.
+ */
+async function resolveNotifyUsers(ticket, eventType, actorId) {
+  const notify = new Set();
+
+  switch (eventType) {
+    case 'ticket_created':
+      // Notify department managers (technical_manager in the ticket's department)
+      if (ticket.departmentId) {
+        const managers = await User.find({
+          departmentId: ticket.departmentId,
+          isActive: true,
+        }).populate('role');
+        for (const m of managers) {
+          const roleName = m.role?.name;
+          const perms = m.role?.permissions || [];
+          if (
+            roleName === 'technical_manager' ||
+            perms.includes('*') ||
+            perms.includes('ticket:view_department')
+          ) {
+            notify.add(m._id.toString());
+          }
+        }
+      }
+      break;
+
+    case 'ticket_assigned':
+      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
+      break;
+
+    case 'ticket_status_updated':
+      if (ticket.createdBy) notify.add(ticket.createdBy.toString());
+      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
+      if (ticket.assignedBy) notify.add(ticket.assignedBy.toString());
+      if (actorId) notify.delete(actorId.toString()); // don't notify the actor
+      break;
+
+    case 'ticket_commented':
+      if (ticket.createdBy) notify.add(ticket.createdBy.toString());
+      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
+      if (actorId) notify.delete(actorId.toString()); // don't notify the commenter
+      break;
+
+    case 'ticket_closed':
+      if (ticket.createdBy) notify.add(ticket.createdBy.toString());
+      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
+      if (ticket.assignedBy) notify.add(ticket.assignedBy.toString());
+      if (actorId) notify.delete(actorId.toString()); // don't notify the actor
+      break;
+  }
+
+  return [...notify];
+}
+
+/**
+ * Send push notifications for a ticket lifecycle event.
+ * Best-effort: failures are logged and never thrown.
+ *
+ * @param {object} ticket - Mongoose ticket document (populated fields: createdBy, assignedTo, departmentId)
+ * @param {string} eventType - ticket_created | ticket_assigned | ticket_status_updated | ticket_commented | ticket_closed
+ * @param {string|ObjectId} actorId - user who triggered the event
+ * @param {object} [extraData] - extra data fields to include in the push payload
+ */
+export async function notifyTicketEvent(ticket, eventType, actorId, extraData = {}) {
+  try {
+    const payload = ticketPayload(ticket, eventType);
+    const userIds = await resolveNotifyUsers(ticket, eventType, actorId);
+
+    if (!userIds.length) {
+      logger.debug({ eventType, ticketNumber: ticket.ticketNumber }, 'No users to notify for ticket event');
+      return { sent: 0, failed: 0, total: 0, notifiedUsers: 0 };
+    }
+
+    const results = await Promise.allSettled(
+      userIds.map((uid) =>
+        sendToUser(uid, payload.title, payload.body, {
+          ...payload,
+          ...extraData,
+        })
+      )
+    );
+
+    let sent = 0;
+    let failed = 0;
+    let total = 0;
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        sent += r.value.sent || 0;
+        failed += r.value.failed || 0;
+        total += r.value.total || 0;
+      } else {
+        failed += 1;
+        total += 1;
+        logger.error({ err: r.reason, eventType }, 'notifyTicketEvent per-user failure');
+      }
+    }
+
+    logger.info({
+      eventType,
+      ticketNumber: ticket.ticketNumber,
+      notifiedUsers: userIds.length,
+      sent,
+      failed,
+      total,
+    }, 'Ticket event push notifications sent');
+
+    return { sent, failed, total, notifiedUsers: userIds.length };
+  } catch (err) {
+    logger.error({ err, eventType, ticketNumber: ticket.ticketNumber }, 'notifyTicketEvent failed');
+    return { sent: 0, failed: 0, total: 0, notifiedUsers: 0, error: err.message };
+  }
+}

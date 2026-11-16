@@ -43,6 +43,41 @@ export const createUser = async (req, res, next) => {
           message: 'Forbidden: technical managers can only create service engineers',
         });
       }
+
+      // Technical managers can only create users in their own department
+      const tmDepartmentId = req.user?.departmentId;
+      if (!tmDepartmentId) {
+        await auditLog({
+          actor: req.user._id,
+          action: 'user:create',
+          targetType: 'User',
+          targetId: null,
+          outcome: 'failure',
+          details: { reason: 'technical_manager has no department assigned' },
+          req,
+        });
+        return res.status(403).json({
+          message: 'Forbidden: technical manager has no department assigned',
+        });
+      }
+
+      if (!departmentId) {
+        // Default to the TM's own department if not provided
+        departmentId = tmDepartmentId;
+      } else if (departmentId.toString() !== tmDepartmentId.toString()) {
+        await auditLog({
+          actor: req.user._id,
+          action: 'user:create',
+          targetType: 'User',
+          targetId: null,
+          outcome: 'failure',
+          details: { requestedDepartment: departmentId, tmDepartment: tmDepartmentId, reason: 'technical_manager cannot create users outside their department' },
+          req,
+        });
+        return res.status(403).json({
+          message: 'Forbidden: technical managers can only create users in their own department',
+        });
+      }
     }
 
     const user = await User.create({

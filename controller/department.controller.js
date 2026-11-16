@@ -31,7 +31,30 @@ export const createDepartment = async (req, res, next) => {
 
 export const getDepartments = async (req, res, next) => {
   try {
-    const departments = await Department.find().sort({ name: 1 }).lean();
+    const permissions = req.user?.role?.permissions || [];
+    const isAdminOrRoleManager =
+      permissions.includes('*') || permissions.includes('role:manage');
+    const canViewDepartments = permissions.includes('department:view');
+
+    if (!isAdminOrRoleManager && !canViewDepartments) {
+      return res.status(403).json({
+        message: 'Forbidden: missing permission',
+      });
+    }
+
+    let departments;
+    if (isAdminOrRoleManager) {
+      departments = await Department.find().sort({ name: 1 }).lean();
+    } else {
+      // Technical Manager: only see their own department
+      const userDepartmentId = req.user?.departmentId;
+      if (!userDepartmentId) {
+        return res.json([]);
+      }
+      departments = await Department.find({ _id: userDepartmentId })
+        .sort({ name: 1 })
+        .lean();
+    }
 
     const [roleCounts, userCounts] = await Promise.all([
       Role.aggregate([{ $group: { _id: '$departmentId', count: { $sum: 1 } } }]),

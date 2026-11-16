@@ -59,7 +59,27 @@ export const getRoles = async (req, res, next) => {
     const filter = {};
     if (req.query.departmentId) filter.departmentId = req.query.departmentId;
 
-    return res.json(await Role.find(filter).sort({ name: 1 }).populate('departmentId'));
+    const permissions = req.user?.role?.permissions || [];
+    const isAdminOrRoleManager =
+      permissions.includes('*') || permissions.includes('role:manage');
+    const canViewRoles = permissions.includes('role:view');
+
+    if (!isAdminOrRoleManager && !canViewRoles) {
+      return res.status(403).json({
+        message: 'Forbidden: missing permission',
+      });
+    }
+
+    const roles = await Role.find(filter).sort({ name: 1 }).populate('departmentId');
+
+    // Technical Managers (role:view without role:manage) can only see
+    // service_engineer roles — the roles they are allowed to assign.
+    if (!isAdminOrRoleManager && canViewRoles) {
+      const filtered = roles.filter((r) => r.name === 'service_engineer');
+      return res.json(filtered);
+    }
+
+    return res.json(roles);
   } catch (err) {
     next(err);
   }

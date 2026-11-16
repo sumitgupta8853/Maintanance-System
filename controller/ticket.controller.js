@@ -1,10 +1,12 @@
-// import Ticket from '../Models/Ticket.js';
-// import TicketHistory from '../Models/TicketHistory.js';
-// import TicketComment from '../Models/TicketComment.js';
-// import User from '../Models/User.js';
-// import Department from '../Models/Department.js';
-// import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
-// import { auditLog } from '../utils/audit.js';
+import Ticket from '../Models/Ticket.js';
+import TicketHistory from '../Models/TicketHistory.js';
+import TicketComment from '../Models/TicketComment.js';
+import User from '../Models/User.js';
+import Department from '../Models/Department.js';
+import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
+import { auditLog } from '../utils/audit.js';
+import { logger } from '../utils/logger.js';
+import { notifyTicketEvent } from '../utils/pushNotification.js';
 
 // const TEAM_MEMBER_ALLOWED_TRANSITIONS = {
 //   open: ['assigned', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
@@ -327,14 +329,6 @@
 //   } catch (err) { next(err); }
 // };
 
-import Ticket from '../Models/Ticket.js';
-import TicketHistory from '../Models/TicketHistory.js';
-import TicketComment from '../Models/TicketComment.js';
-import User from '../Models/User.js';
-import Department from '../Models/Department.js';
-import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
-import { auditLog } from '../utils/audit.js';
-import { logger } from '../utils/logger.js';
 
 // Admin ('*') and any role with 'ticket:all_departments' can act on tickets in every department.
 const hasAllAccess = (user) => {
@@ -504,6 +498,7 @@ export const assignTicket = async (req, res, next) => {
     await recordStatusChange(ticket._id, oldStatus, 'assigned', user._id, 'Ticket assigned by manager');
     if (oldAssignedTo && oldAssignedTo.toString() !== assignedTo) await recordFieldChange(ticket._id, 'assignedTo', oldAssignedTo, assignedTo, user._id, 'Assignee changed');
     await auditLog({ actor: user._id, action: 'ticket:assign', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, assignedTo, oldStatus }, req });
+    await notifyTicketEvent(ticket, 'ticket_assigned', user._id);
     return res.json(ticket);
   } catch (err) { next(err); }
 };
@@ -536,8 +531,19 @@ export const updateStatus = async (req, res, next) => {
       return res.status(400).json({ message: `faultDescription is required when setting status to ${status}` });
     }
 
-    const ticket = await Ticket.findOne(hasAllAccess(user) ? { _id: req.params.id } : { _id: req.params.id, assignedTo: user._id });
-    if (!ticket) return res.status(404).json({ message: 'Ticket not found or not assigned to you' });
+    const permissions = user.role?.permissions || [];
+    const roleName = user.role?.name;
+    let ticketFilter;
+    if (hasAllAccess(user)) {
+      ticketFilter = { _id: req.params.id };
+    } else if (roleName === 'technical_manager') {
+      // Technical manager can update any ticket in their own department
+      ticketFilter = { _id: req.params.id, departmentId: user.departmentId };
+    } else {
+      ticketFilter = { _id: req.params.id, assignedTo: user._id };
+    }
+    const ticket = await Ticket.findOne(ticketFilter);
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found or out of scope' });
 
     const oldStatus = ticket.status;
     const allowed = TEAM_MEMBER_ALLOWED_TRANSITIONS[oldStatus];
@@ -577,6 +583,7 @@ export const updateStatus = async (req, res, next) => {
       },
       req
     });
+    await notifyTicketEvent(ticket, 'ticket_status_updated', user._id);
 
     return res.json(ticket);
   } catch (err) { next(err); }
@@ -607,6 +614,7 @@ export const createTicket = async (req, res, next) => {
     }
 
     await auditLog({ actor: user._id, action: 'ticket:create', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, subject, departmentId }, req });
+    await notifyTicketEvent(ticket, 'ticket_created', user._id);
     return res.status(201).json(ticket);
   } catch (err) { next(err); }
 };
@@ -676,6 +684,7 @@ export const addTicketComment = async (req, res, next) => {
     const newComment = await TicketComment.create({ ticketId: req.params.id, author: user._id, comment: comment.trim(), isInternalNote: isInternalNote === true });
     await newComment.populate('author', 'name email');
     await auditLog({ actor: user._id, action: 'ticket:comment', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, isInternalNote: newComment.isInternalNote }, req });
+    await notifyTicketEvent(ticket, 'ticket_commented', user._id);
     return res.status(201).json(newComment);
   } catch (err) { next(err); }
 };
@@ -706,6 +715,7 @@ export const closeTicket = async (req, res, next) => {
     await ticket.save();
     await recordStatusChange(ticket._id, 'resolved', 'closed', user._id, 'Ticket closed');
     await auditLog({ actor: user._id, action: 'ticket:close', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, closedAt: ticket.closedAt }, req });
+    await notifyTicketEvent(ticket, 'ticket_closed', user._id);
     return res.json(ticket);
   } catch (err) { next(err); }
 };

@@ -67,8 +67,9 @@ try {
         name: "technical_manager",
         description: "Technical Manager",
         permissions: [
-            "ticket:view_department", "ticket:assign", "ticket:close", "ticket:view",
+            "ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view",
             "ticket:edit", "ticket:comment", "users:create", "report:read",
+            "role:view", "department:view",
         ],
         departmentId: engDept._id,
     });

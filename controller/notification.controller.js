@@ -113,14 +113,14 @@ export const unregisterDevice = async (req, res, next) => {
  */
 export const listMyDevices = async (req, res, next) => {
   try {
-    const devices = await DeviceToken.find({
-      user: req.user._id,
-      isActive: true,
-    })
-      .select('deviceToken platform deviceModel osVersion appVersion lastUsedAt createdAt')
+    const filter = { user: req.user._id };
+    if (req.query.all !== 'true') filter.isActive = true;
+
+    const devices = await DeviceToken.find(filter)
+      .select('deviceToken deviceId platform deviceModel osVersion appVersion isActive lastUsedAt createdAt')
       .sort({ lastUsedAt: -1 });
 
-    return res.json({ devices });
+    return res.json({ count: devices.length, devices });
   } catch (err) {
     next(err);
   }

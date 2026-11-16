@@ -15,9 +15,9 @@ import {
 
 const router = express.Router();
 
-// Read routes: ticket:view (or just authenticate) so ticket creators can read departments
-router.get('/', authenticate, requirePermission('ticket:view'), getDepartments);
-router.get('/:id', authenticate, requirePermission('ticket:view'), getDepartment);
+// Read routes: department:view (admin via * wildcard, Technical Manager via explicit grant)
+router.get('/', authenticate, requirePermission('department:view'), getDepartments);
+router.get('/:id', authenticate, requirePermission('department:view'), getDepartment);
 
 // Management routes require department:manage permission (admin via * wildcard)
 router.post('/', authenticate, requirePermission('department:manage'), createDepartment);
