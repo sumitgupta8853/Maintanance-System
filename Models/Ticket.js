@@ -110,6 +110,8 @@ const ticketSchema = new mongoose.Schema(
 ticketSchema.index({ departmentId: 1, status: 1 });
 ticketSchema.index({ assignedTo: 1, status: 1 });
 ticketSchema.index({ createdBy: 1 });
+ticketSchema.index({ createdAt: 1 });
+// Recommended indexes
 
 const Ticket = mongoose.model('Ticket', ticketSchema);
 

@@ -20,7 +20,8 @@ role-based access control (RBAC), refresh-token rotation, and security audit log
 11. [Security & Privilege Escalation Protection](#security--privilege-escalation-protection)
 12. [Error Handling](#error-handling)
 13. [Available Scripts](#available-scripts)
-14. [License](#license)
+14. [Auto Ticket & Health Monitor](#auto-ticket--health-monitor)
+15. [License](#license)
 
 ---
 
@@ -419,3 +420,20 @@ Centralized error handler in `index.js`:
 
 ISC
 
+
+
+
+
+## Auto Ticket & Health Monitor
+
+For the complete technical documentation on how the automatic ticket creation and charger health monitoring work, see:
+
+- **Docs/AUTO_TICKET_HEALTH_MONITOR.md** - Full documentation of the auto-ticket generation logic, health monitor tick cycle, configuration, API endpoints, recovery workflow, and debugging guide.
+
+The auto-ticket system consists of:
+- **utils/healthMonitor.js** - Production health monitor that polls the OCPP hub API every 60s and creates AUTO- tickets for critical/high chargers.
+- **Health.js** - Standalone ad-hoc monitoring script for manual checks.
+- **Models/Ticket.js** - Ticket schema with type: auto/normal and recoveredAt fields.
+- **scripts/backfillTicketType.js** - One-time backfill migration for legacy tickets.
+
+See the [Auto Ticket & Health Monitor](docs/AUTO_TICKET_HEALTH_MONITOR.md) documentation for full details.

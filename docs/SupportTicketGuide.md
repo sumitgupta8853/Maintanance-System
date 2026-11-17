@@ -69,6 +69,8 @@ All list endpoints (`GET /all`, `GET /manager`, `GET /team`) accept these option
 |---|---|---|
 | `ticketType` | `auto`, `normal` | `auto` = tickets created by the charger health monitor; `normal` = manually created tickets |
 | `hasRecoveryNote` | `true`, `false` | `true` = tickets that have a health-monitor recovery note; `false` = tickets without one |
+| `dateFrom` | `YYYY-MM-DDTHH:mm:ss.sssZ` (or `YYYY-MM-DD`) | Include tickets created on/after this timestamp; bare `YYYY-MM-DD` means start of that day |
+| `dateTo` | `YYYY-MM-DDTHH:mm:ss.sssZ` (or `YYYY-MM-DD`) | Include tickets created on/before this timestamp; bare `YYYY-MM-DD` means end of that day |
 
 Examples:
 
@@ -84,6 +86,12 @@ GET /all?hasRecoveryNote=true
 
 # Combine with status
 GET /manager?ticketType=auto&status=open
+
+# Date range: tickets from 2026-10-01 through 2026-10-31 (inclusive)
+GET /all?dateFrom=2026-10-01&dateTo=2026-10-31
+
+# Hour-precision date range (ISO 8601)
+GET /all?dateFrom=2026-10-01T00:00:00.000Z&dateTo=2026-10-31T23:59:59.999Z
 ```
 
 Notes:
@@ -91,6 +99,7 @@ Notes:
 - Auto tickets are created by the health monitor (`utils/healthMonitor.js`) with `ticketNumber` prefixed `AUTO-` and a `[ocpp:<id>]` tag.
 - Recovery notes are written by the health monitor when a previously critical/high charger recovers.
 - Existing tickets created before this field was added default to `normal`; run `node scripts/backfillTicketType.js` once to tag legacy `AUTO-…` tickets as `auto`.
+- `dateFrom`/`dateTo` filter tickets by `createdAt`. Use bare `YYYY-MM-DD` for calendar-day filtering (time coerced to start-of-day / end-of-day) or ISO 8601 with time for exact bounds.
 
 ## Route Ordering (Critical)
 

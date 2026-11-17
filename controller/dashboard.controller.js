@@ -2,6 +2,7 @@ import Ticket from '../Models/Ticket.js';
 import User from '../Models/User.js';
 import Department from '../Models/Department.js';
 import AuditLog from '../Models/AuditLog.js';
+import { ticketAccessFilter } from '../utils/ticketAccess.js';
 
 // Every status defined on the Ticket model
 const ALL_STATUSES = [
@@ -37,12 +38,14 @@ const emptyStatusCounts = () =>
  */
 export const getDashboard = async (req, res, next) => {
   try {
+    const filter = ticketAccessFilter(req.user);
     const [total, statusRows, urgent, recent] = await Promise.all([
-      Ticket.countDocuments({}),
+      Ticket.countDocuments(filter),
       Ticket.aggregate([
+        { $match: filter },
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ]),
-      Ticket.countDocuments({ priority: 'urgent', status: { $nin: ['resolved', 'closed'] } }),
+      Ticket.countDocuments({ priority: 'urgent', status: { $in: ['resolved', 'closed'] } }),
       Ticket.find()
         .sort({ createdAt: -1 })
         .limit(10)
@@ -73,15 +76,12 @@ export const getDashboard = async (req, res, next) => {
  */
 export const getSummary = async (req, res, next) => {
   try {
+    const filter = ticketAccessFilter(req.user);
     const [total, statusRows, priorityRows, users, departments, urgent] =
       await Promise.all([
-        Ticket.countDocuments({}),
-        Ticket.aggregate([
-          { $group: { _id: '$status', count: { $sum: 1 } } }
-        ]),
-        Ticket.aggregate([
-          { $group: { _id: '$priority', count: { $sum: 1 } } }
-        ]),
+        Ticket.countDocuments(filter),
+        Ticket.aggregate([{ $match: filter }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+        Ticket.aggregate([{ $match: filter }, { $group: { _id: '$priority', count: { $sum: 1 } } }]),
         User.countDocuments({ isActive: true }),
         Department.countDocuments({}),
         Ticket.countDocuments({ priority: 'urgent', status: { $nin: ['resolved', 'closed'] } })
@@ -222,8 +222,9 @@ export const getTicketTrend = async (req, res, next) => {
  */
 export const getRecentTickets = async (req, res, next) => {
   try {
+    const filter = ticketAccessFilter(req.user);
     const limit = parseInt(req.query.limit) || 10;
-    const tickets = await Ticket.find()
+    const tickets = await Ticket.find(filter)
       .sort({ createdAt: -1 })
       .limit(limit)
       .populate('departmentId', 'name')

@@ -356,7 +356,28 @@ const applyRecovered = (filter, recovered) => {
   return filter;
 };
 
-// Makes sure every ticket in the API response has type: "auto" | "normal" (also for tickets saved before the field existed).
+// dateFrom/dateTo filter helpers
+const applyDateRange = (filter, dateFrom, dateTo) => {
+  const from = String(dateFrom || '').trim();
+  const to = String(dateTo || '').trim();
+  if (!from && !to) return filter;
+  if (from) {
+    const d = new Date(from);
+    if (!Number.isNaN(d.getTime())) {
+      if (d.toISOString().slice(0, 10) === from) d.setHours(0, 0, 0, 0);
+      filter.$and = [...(filter.$and || []), { createdAt: { $gte: d } }];
+    }
+  }
+  if (to) {
+    const d = new Date(to);
+    if (!Number.isNaN(d.getTime())) {
+      if (d.toISOString().slice(0, 10) === to) d.setHours(23, 59, 59, 999);
+      filter.$and = [...(filter.$and || []), { createdAt: { $lte: d } }];
+    }
+  }
+  return filter;
+};
+
 const withType = (ticket) => {
   if (!ticket) return ticket;
   const obj = typeof ticket.toObject === 'function' ? ticket.toObject() : { ...ticket };
@@ -411,13 +432,14 @@ async function checkAndEscalateTicket(ticket) {
 export const getAllTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, departmentId, search, type, recovered, page = 1, limit = 10 } = req.query;
+    const { status, priority, departmentId, search, type, recovered, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
     const filter = ticketAccessFilter(user);
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (departmentId) filter.departmentId = departmentId;
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
+    applyDateRange(filter, dateFrom, dateTo);
     if (search) {
       filter.$and = [...(filter.$and || []), { $or: [{ subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }] }];
     }
@@ -434,7 +456,7 @@ export const getAllTickets = async (req, res, next) => {
 export const getDepartmentTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, type, recovered, page = 1, limit = 10 } = req.query;
+    const { status, priority, type, recovered, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
     const allAccess = hasAllAccess(user);
     if (!allAccess && !user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
     const deptFilter = allAccess
@@ -443,6 +465,7 @@ export const getDepartmentTickets = async (req, res, next) => {
     const filter = { ...deptFilter, ...(status ? { status } : {}), ...(priority ? { priority } : {}) };
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
+    applyDateRange(filter, dateFrom, dateTo);
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
     const escalatedTickets = [];

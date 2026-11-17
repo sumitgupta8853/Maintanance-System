@@ -43,7 +43,7 @@ app.use(
 );
 
 app.get("/", (req, res) => {
-    res.send("Hello World!");
+  res.send("Hello World!");
 });
 
 app.use("/api/auth", authRoutes);
@@ -60,29 +60,29 @@ app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 
 // Central error handler
 app.use((err, req, res, next) => {
-    logger.error({ err, req }, err.message);
-    if (err.code === 11000) {
-        return res.status(409).json({ message: "Duplicate value", fields: err.keyValue });
-    }
-    if (err.name === "ValidationError") {
-        return res.status(400).json({ message: err.message });
-    }
+  logger.error({ err, req }, err.message);
+  if (err.code === 11000) {
+    return res.status(409).json({ message: "Duplicate value", fields: err.keyValue });
+  }
+  if (err.name === "ValidationError") {
+    return res.status(400).json({ message: err.message });
+  }
 
-    if (err.name === "CastError") {
-        return res.status(400).json({ message: `Invalid ${err.path}` });
-    }
-    res.status(err.status || 500).json({ message: err.message || "Server error" });
+  if (err.name === "CastError") {
+    return res.status(400).json({ message: `Invalid ${err.path}` });
+  }
+  res.status(err.status || 500).json({ message: err.message || "Server error" });
 });
 
 connectDB().then(() => {
-    // Initialize Firebase Cloud Messaging (push notifications)
-    initFCM();
+  // Initialize Firebase Cloud Messaging (push notifications)
+  initFCM();
 
-    // Start auto ticket creation health monitor (every minute)
-    startHealthMonitor();
+  // Start auto ticket creation health monitor (every minute)
+  startHealthMonitor();
 
-    const PORT = process.env.PORT || 6500;
-    app.listen(PORT, () => {
-        logger.info(`Server is running on port ${PORT}`);
-    });
+  const PORT = process.env.PORT || 6500;
+  app.listen(PORT, () => {
+    logger.info(`Server is running on port ${PORT}`);
+  });
 });
