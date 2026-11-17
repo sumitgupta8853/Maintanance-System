@@ -70,6 +70,7 @@ try {
             "ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view",
             "ticket:edit", "ticket:comment", "users:create", "report:read",
             "role:view", "department:view",
+            "department:manage",
         ],
         departmentId: engDept._id,
     });

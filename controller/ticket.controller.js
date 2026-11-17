@@ -660,7 +660,7 @@ export const editTicket = async (req, res, next) => {
     if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const permissions = user.role?.permissions || [];
     if (ticket.status === 'closed' && !permissions.includes('*')) return res.status(403).json({ message: 'Cannot edit a closed ticket' });
-    const editableFields = ['subject', 'description', 'priority', 'customerName', 'customerPhone', 'customerEmail'];
+    const editableFields = ['subject', 'description', 'priority', 'departmentId', 'customerName', 'customerPhone', 'customerEmail'];
     const changes = {};
     for (const field of editableFields) {
       if (req.body[field] !== undefined && req.body[field] !== ticket[field]) {
