@@ -15,6 +15,7 @@ const userPayload = (u) => ({
     id: u._id,
     name: u.name,
     email: u.email,
+    photo: u.photo,
     role: u.role.name,
     permissions: u.role.permissions,
 });

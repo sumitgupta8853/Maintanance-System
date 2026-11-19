@@ -111,7 +111,12 @@ ticketSchema.index({ departmentId: 1, status: 1 });
 ticketSchema.index({ assignedTo: 1, status: 1 });
 ticketSchema.index({ createdBy: 1 });
 ticketSchema.index({ createdAt: 1 });
-// Recommended indexes
+
+// Additional indexes for common query patterns
+ticketSchema.index({ priority: 1, status: 1 });
+ticketSchema.index({ escalatedAt: 1 });
+ticketSchema.index({ type: 1 });
+// Additional indexes for common query patterns
 
 const Ticket = mongoose.model('Ticket', ticketSchema);
 

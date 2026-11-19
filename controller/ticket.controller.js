@@ -432,31 +432,41 @@ async function checkAndEscalateTicket(ticket) {
 export const getAllTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, departmentId, search, type, recovered, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
+    const { status, priority, departmentId, search, type, recovered, dateTo, cursor, limit = 10 } = req.query;
     const filter = ticketAccessFilter(user);
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (departmentId) filter.departmentId = departmentId;
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
-    applyDateRange(filter, dateFrom, dateTo);
+    applyDateRange(filter, null, dateTo);
     if (search) {
       filter.$and = [...(filter.$and || []), { $or: [{ subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }] }];
     }
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    // Cursor-based pagination: O(1) performance using _id cursor instead of O(n) .skip()
+    // cursor should be the _id of the last ticket from previous page
+    let query = Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 });
+    if (cursor) {
+      query = query.where('_id').lt(cursor);
+    }
+    const tickets = await query.limit(parseInt(limit));
     const escalatedTickets = [];
     for (const ticket of tickets) {
       escalatedTickets.push(await checkAndEscalateTicket(ticket));
     }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets: escalatedTickets.map(withType), total, page: parseInt(page), limit: parseInt(limit) });
+    // Calculate next cursor if there are more results
+    let nextCursor;
+    if (tickets.length >= parseInt(limit)) {
+      nextCursor = tickets[tickets.length - 1]._id;
+    }
+    return res.json({ tickets: escalatedTickets.map(withType), total, nextCursor });
   } catch (err) { next(err); }
 };
 export const getDepartmentTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, type, recovered, dateFrom, dateTo, page = 1, limit = 10 } = req.query;
+    const { status, priority, type, recovered, dateTo, cursor, limit = 10 } = req.query;
     const allAccess = hasAllAccess(user);
     if (!allAccess && !user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
     const deptFilter = allAccess
@@ -465,15 +475,25 @@ export const getDepartmentTickets = async (req, res, next) => {
     const filter = { ...deptFilter, ...(status ? { status } : {}), ...(priority ? { priority } : {}) };
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
-    applyDateRange(filter, dateFrom, dateTo);
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const tickets = await Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit));
+    applyDateRange(filter, null, dateTo);
+    // Cursor-based pagination: O(1) performance using _id cursor instead of O(n) .skip()
+    // cursor should be the _id of the last ticket from previous page
+    let query = Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 });
+    if (cursor) {
+      query = query.where('_id').lt(cursor);
+    }
+    const tickets = await query.limit(parseInt(limit));
     const escalatedTickets = [];
     for (const ticket of tickets) {
       escalatedTickets.push(await checkAndEscalateTicket(ticket));
     }
     const total = await Ticket.countDocuments(filter);
-    return res.json({ tickets: escalatedTickets.map(withType), total, page: parseInt(page), limit: parseInt(limit) });
+    // Calculate next cursor if there are more results
+    let nextCursor;
+    if (tickets.length >= parseInt(limit)) {
+      nextCursor = tickets[tickets.length - 1]._id;
+    }
+    return res.json({ tickets: escalatedTickets.map(withType), total, nextCursor });
   } catch (err) { next(err); }
 };
 export const getDepartmentTicket = async (req, res, next) => {
@@ -638,6 +658,19 @@ export const createTicket = async (req, res, next) => {
 
     await auditLog({ actor: user._id, action: 'ticket:create', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, subject, departmentId }, req });
     await notifyTicketEvent(ticket, 'ticket_created', user._id);
+
+    // Publish ticket created event to RabbitMQ
+    await publish('ticket:created', {
+      ticketId: ticket._id,
+      ticketNumber: ticket.ticketNumber,
+      subject: ticket.subject,
+      priority: ticket.priority,
+      departmentId: ticket.departmentId,
+      type: ticket.type,
+      createdBy: user._id,
+      assignedTo: ticket.assignedTo,
+      timestamp: new Date()
+    });
     return res.status(201).json(ticket);
   } catch (err) { next(err); }
 };
@@ -708,6 +741,16 @@ export const addTicketComment = async (req, res, next) => {
     await newComment.populate('author', 'name email');
     await auditLog({ actor: user._id, action: 'ticket:comment', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, isInternalNote: newComment.isInternalNote }, req });
     await notifyTicketEvent(ticket, 'ticket_commented', user._id);
+
+    // Publish ticket commented event to RabbitMQ
+    await publish('ticket:commented', {
+      ticketId: ticket._id,
+      commentId: newComment._id,
+      isInternalNote: newComment.isInternalNote,
+      author: user._id,
+      timestamp: new Date()
+    });
+
     return res.status(201).json(newComment);
   } catch (err) { next(err); }
 };
@@ -739,6 +782,15 @@ export const closeTicket = async (req, res, next) => {
     await recordStatusChange(ticket._id, 'resolved', 'closed', user._id, 'Ticket closed');
     await auditLog({ actor: user._id, action: 'ticket:close', target: ticket, targetType: 'Ticket', targetId: ticket._id, outcome: 'success', details: { ticketNumber: ticket.ticketNumber, closedAt: ticket.closedAt }, req });
     await notifyTicketEvent(ticket, 'ticket_closed', user._id);
+
+    // Publish ticket closed event to RabbitMQ
+    await publish('ticket:closed', {
+      ticketId: ticket._id,
+      closedAt: ticket.closedAt,
+      closedBy: user._id,
+      timestamp: new Date()
+    });
+
     return res.json(ticket);
   } catch (err) { next(err); }
 };

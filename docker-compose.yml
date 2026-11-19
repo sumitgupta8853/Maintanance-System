@@ -1,0 +1,45 @@
+services:
+  app:
+    build: .
+    container_name: maintainance-system-app
+    restart: unless-stopped
+    ports:
+      - "6500:6500"
+    env_file:
+      - .env
+    environment:
+      - PORT=6500
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+    networks:
+      - maintainance-net
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - maintainance-net
+
+volumes:
+  rabbitmq_data:
+
+networks:
+  maintainance-net:
+    driver: bridge

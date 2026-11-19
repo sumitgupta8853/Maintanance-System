@@ -4,6 +4,7 @@ import Role from '../Models/Role.js';
 import Department from '../Models/Department.js';
 import { auditLog } from '../utils/audit.js';
 import { logger } from '../utils/logger.js';
+import bcrypt from 'bcryptjs';   // or 'bcrypt', whichever is in your package.json
 
 const PRIVILEGED_ROLES = ['admin', 'technical_manager'];
 
@@ -262,6 +263,110 @@ export const deleteUser = async (req, res, next) => {
     });
 
     return res.json({ message: 'User deleted' });
+  } catch (err) {
+    next(err);
+  }
+};
+export const updateProfile = async (req, res, next) => {
+  try {
+    // Users can only edit their own profile
+    if (req.user._id.toString() !== req.params.id) {
+      return res.status(403).json({ message: 'Forbidden: you can only edit your own profile' });
+    }
+
+    const { name, email } = req.body || {};
+    const updates = {};
+
+    if (name !== undefined) {
+      updates.name = name;
+    }
+
+    if (email !== undefined) {
+      const existingUser = await User.findOne({ email });
+      if (existingUser && existingUser._id.toString() !== req.params.id) {
+        return res.status(400).json({ message: 'Email already exists' });
+      }
+      updates.email = email;
+    }
+
+    // Photo uploaded via multer (field name: "photo")
+  if (req.file) {
+  updates.photo = `/profiles/${req.file.filename}`;
+} else if (req.body?.photo !== undefined) {
+  updates.photo = req.body.photo;
+}
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: 'No fields to update' });
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: updates }, {
+      new: true,
+      runValidators: true,
+    }).populate('role').populate('departmentId');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    await auditLog({
+      actor: req.user._id,
+      action: 'user:update',
+      target: user,
+      targetType: 'User',
+      targetId: user._id,
+      outcome: 'success',
+      details: { changedFields: Object.keys(updates) },
+      req,
+    });
+
+   return res.json(user);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Change user password
+export const changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    console.log('Change Password Request Body:', req.body);
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current password and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.params.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if the current password is correct
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+
+    // Hash the new password
+    user.password = newPassword;
+    await user.save();
+
+    await auditLog({
+      actor: req.user._id,
+      action: 'user:password_change',
+      target: user,
+      targetType: 'User',
+      targetId: user._id,
+      outcome: 'success',
+      req,
+    });
+
+    return res.json({ message: 'Password changed successfully' });
   } catch (err) {
     next(err);
   }
