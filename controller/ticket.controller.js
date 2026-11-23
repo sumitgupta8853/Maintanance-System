@@ -7,7 +7,7 @@ import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
 import { auditLog } from '../utils/audit.js';
 import { logger } from '../utils/logger.js';
 import { notifyTicketEvent } from '../utils/pushNotification.js';
-
+import { publish } from '../middlewares/publisher.js';
 // const TEAM_MEMBER_ALLOWED_TRANSITIONS = {
 //   open: ['assigned', 'in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
 //   assigned: ['in_progress', 'partially_resolved', 'waiting_for_parts', 'on_hold'],
@@ -20,13 +20,6 @@ import { notifyTicketEvent } from '../utils/pushNotification.js';
 //   reopened: ['in_progress', 'assigned']
 // };
 
-// async function recordFieldChange(ticketId, field, oldValue, newValue, changedBy, note) {
-//   try {
-//     await TicketHistory.create({ ticketId, type: 'field', field, oldValue, newValue, note, changedBy });
-//   } catch (err) {
-//     console.error('Ticket history field write failed:', err.message);
-//   }
-// }
 
 // async function recordStatusChange(ticketId, oldStatus, newStatus, changedBy, note) {
 //   try {
@@ -357,7 +350,7 @@ const applyRecovered = (filter, recovered) => {
 };
 
 // dateFrom/dateTo filter helpers
-const applyDateRange = (filter, dateFrom, dateTo) => {
+export const applyDateRange = (filter, dateFrom, dateTo) => {
   const from = String(dateFrom || '').trim();
   const to = String(dateTo || '').trim();
   if (!from && !to) return filter;
@@ -429,26 +422,65 @@ async function checkAndEscalateTicket(ticket) {
   return ticket;
 }
 
+// export const getAllTickets = async (req, res, next) => {
+//   try {
+//     const user = req.user;
+//     const { status, priority, departmentId, search, type, recovered, dateTo, cursor, limit = 10 } = req.query;
+//     const filter = ticketAccessFilter(user);
+//     if (status) filter.status = status;
+//     if (priority) filter.priority = priority;
+//     if (departmentId) filter.departmentId = departmentId;
+//     applyTicketType(filter, type);
+//     applyRecovered(filter, recovered);
+//     applyDateRange(filter, null, dateTo);
+//     if (search) {
+//       filter.$and = [...(filter.$and || []), { $or: [{ subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }] }];
+//     }
+//     // Cursor-based pagination: O(1) performance using _id cursor instead of O(n) .skip()
+//     // cursor should be the _id of the last ticket from previous page
+//     let query = Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 });
+//     if (cursor) {
+//       query = query.where('_id').lt(cursor);
+//     }
+//     const tickets = await query.limit(parseInt(limit));
+//     const escalatedTickets = [];
+//     for (const ticket of tickets) {
+//       escalatedTickets.push(await checkAndEscalateTicket(ticket));
+//     }
+//     const total = await Ticket.countDocuments(filter);
+//     // Calculate next cursor if there are more results
+//     let nextCursor;
+//     if (tickets.length >= parseInt(limit)) {
+//       nextCursor = tickets[tickets.length - 1]._id;
+//     }
+//     return res.json({ tickets: escalatedTickets.map(withType), total, nextCursor });
+//   } catch (err) { next(err); }
+// };
+
+
 export const getAllTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, departmentId, search, type, recovered, dateTo, cursor, limit = 10 } = req.query;
+    const { status, priority, departmentId, search, type, recovered, dateFrom, FromTo, dateTo, cursor, limit = 10 } = req.query;
+    console.log('query:', req.query);
     const filter = ticketAccessFilter(user);
     if (status) filter.status = status;
     if (priority) filter.priority = priority;
     if (departmentId) filter.departmentId = departmentId;
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
-    applyDateRange(filter, null, dateTo);
+    applyDateRange(filter, dateFrom ?? FromTo, dateTo);
     if (search) {
       filter.$and = [...(filter.$and || []), { $or: [{ subject: { $regex: search, $options: 'i' } }, { ticketNumber: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }] }];
     }
+    console.log('filter:', filter);
     // Cursor-based pagination: O(1) performance using _id cursor instead of O(n) .skip()
     // cursor should be the _id of the last ticket from previous page
     let query = Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 });
     if (cursor) {
       query = query.where('_id').lt(cursor);
     }
+   console.log('filter:', JSON.stringify(filter));
     const tickets = await query.limit(parseInt(limit));
     const escalatedTickets = [];
     for (const ticket of tickets) {
@@ -461,12 +493,13 @@ export const getAllTickets = async (req, res, next) => {
       nextCursor = tickets[tickets.length - 1]._id;
     }
     return res.json({ tickets: escalatedTickets.map(withType), total, nextCursor });
+
   } catch (err) { next(err); }
 };
 export const getDepartmentTickets = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, priority, type, recovered, dateTo, cursor, limit = 10 } = req.query;
+    const { status, priority, type, recovered, dateFrom, FromTo, dateTo, cursor, limit = 10 } = req.query;
     const allAccess = hasAllAccess(user);
     if (!allAccess && !user.departmentId) return res.status(403).json({ message: 'Manager has no department assigned' });
     const deptFilter = allAccess
@@ -475,7 +508,7 @@ export const getDepartmentTickets = async (req, res, next) => {
     const filter = { ...deptFilter, ...(status ? { status } : {}), ...(priority ? { priority } : {}) };
     applyTicketType(filter, type);
     applyRecovered(filter, recovered);
-    applyDateRange(filter, null, dateTo);
+    applyDateRange(filter, dateFrom ?? FromTo, dateTo);
     // Cursor-based pagination: O(1) performance using _id cursor instead of O(n) .skip()
     // cursor should be the _id of the last ticket from previous page
     let query = Ticket.find(filter).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name').sort({ createdAt: -1 });
@@ -565,7 +598,7 @@ export const getTeamTickets = async (req, res, next) => {
 export const updateStatus = async (req, res, next) => {
   try {
     const user = req.user;
-    const { status, comment, faultDescription, resolutionType, partsRequired } = req.body;
+    const { status, comment, faultDescription, resolutionType, partsRequired, thirdPartyIssue, thirdPartyIssueDescription } = req.body;
     if (!status) return res.status(400).json({ message: 'status is required' });
 
     // Require faultDescription for specific statuses
@@ -599,7 +632,12 @@ export const updateStatus = async (req, res, next) => {
     if (faultDescription !== undefined) ticket.faultDescription = faultDescription.trim();
     if (resolutionType !== undefined) ticket.resolutionType = resolutionType;
     if (partsRequired !== undefined) ticket.partsRequired = partsRequired;
-
+if (thirdPartyIssue !== undefined) {
+  ticket.thirdPartyIssue = Array.isArray(thirdPartyIssue) ? thirdPartyIssue : [thirdPartyIssue];
+}
+if (thirdPartyIssueDescription !== undefined) {
+  ticket.thirdPartyIssueDescription = thirdPartyIssueDescription.trim();
+}
     await ticket.save();
 
     const noteParts = [comment || `Status changed to ${status}`];
@@ -634,7 +672,7 @@ export const updateStatus = async (req, res, next) => {
 export const createTicket = async (req, res, next) => {
   try {
     const user = req.user;
-    const { subject, departmentId, description, priority, customerName, customerPhone, customerEmail } = req.body;
+    const { subject, departmentId, description, priority, customerName, customerPhone, customerEmail, chargerOcppId, chargerId, chargerName, stationName, connectors, connectorName } = req.body;
     if (!subject) return res.status(400).json({ message: 'subject is required' });
     if (!departmentId) return res.status(400).json({ message: 'departmentId is required' });
     const dept = await Department.findById(departmentId);
@@ -647,6 +685,7 @@ export const createTicket = async (req, res, next) => {
       try {
         ticket = await Ticket.create({
           ticketNumber, subject, description, customerName, customerPhone, customerEmail, departmentId,
+          chargerOcppId, chargerId, chargerName, stationName, connectors, connectorName,
           priority: priority || 'medium', status: 'open', createdBy: user._id
         });
         break; // success
@@ -687,13 +726,13 @@ export const getTicket = async (req, res, next) => {
 export const editTicket = async (req, res, next) => {
   try {
     const user = req.user;
-    const { subject, description, priority, customerName, customerPhone, customerEmail } = req.body;
+    const { subject, description, priority, customerName, customerPhone, customerEmail, thirdPartyIssue, thirdPartyIssueDescription } = req.body;
     const ticket = await Ticket.findById(req.params.id);
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
     if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const permissions = user.role?.permissions || [];
     if (ticket.status === 'closed' && !permissions.includes('*')) return res.status(403).json({ message: 'Cannot edit a closed ticket' });
-    const editableFields = ['subject', 'description', 'priority', 'departmentId', 'customerName', 'customerPhone', 'customerEmail'];
+    const editableFields = ['subject', 'description', 'priority', 'departmentId', 'chargerOcppId', 'chargerId', 'chargerName', 'stationName', 'connectors', 'connectorName', 'customerName', 'customerPhone', 'customerEmail', 'thirdPartyIssue', 'thirdPartyIssueDescription'];
     const changes = {};
     for (const field of editableFields) {
       if (req.body[field] !== undefined && req.body[field] !== ticket[field]) {

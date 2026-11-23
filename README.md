@@ -192,9 +192,9 @@ Permissions are stored on the `Role` model as a string array (`permissions: [Str
 | Role | Permissions | System? |
 |------|-------------|---------|
 | `admin` | `["*"]` | Yes |
-| `technical_manager` | `["ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view", "ticket:edit", "ticket:comment", "users:create", "report:read", "role:view", "department:view"]` | No |
-| `service_engineer` | `["ticket:view_assigned", "ticket:update_status", "ticket:close", "ticket:view", "ticket:edit", "ticket:comment"]` | No |
-| `customer_care_manager` | `["ticket:create", "ticket:view", "ticket:view_department", "ticket:assign", "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment", "ticket:all_departments", "users:view"]` | No |
+| `technical_manager` | `["ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view", "ticket:edit", "ticket:comment", "users:create", "report:read", "role:view", "department:view", "department:manage", "ticket:third_party_issue"]` | No |
+| `service_engineer` | `["ticket:view_assigned", "ticket:update_status", "ticket:close", "ticket:view", "ticket:comment", "ticket:create", "ticket:edit", "ticket:third_party_issue"]` | No |
+| `customer_care_manager` | `["ticket:create", "ticket:view", "ticket:view_department", "ticket:assign", "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment", "ticket:all_departments", "users:view", "ticket:third_party_issue"]` | No |
 
 ### Route Protection Matrix
 

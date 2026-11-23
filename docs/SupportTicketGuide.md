@@ -146,6 +146,7 @@ open → assigned → in_progress → resolved → closed
 | `ticket:assign` | Can assign tickets | technical_manager |
 | `ticket:comment` | Can add comments | All roles with view access |
 | `ticket:close` | Can close tickets | technical_manager, service_engineer (assigned tickets only), admin |
+| `ticket:third_party_issue` | Can mark ticket as third-party issue (transformer, voltage, phase, branding, theft) | service_engineer, technical_manager, customer_support_manager, admin |
 
 
 ## Real-World Workflow Example

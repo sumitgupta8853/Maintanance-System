@@ -40,6 +40,30 @@ const ticketSchema = new mongoose.Schema(
       ref: 'Department',
       required: true
     },
+    chargerOcppId: {
+      type: String,
+      trim: true
+    },
+    chargerId: {
+      type: String,
+      trim: true
+    },
+    chargerName: {
+      type: String,
+      trim: true
+    },
+    stationName: {
+      type: String,
+      trim: true
+    },
+    connectors: {
+      type: [String],
+      default: []
+    },
+    connectorName: {
+      type: String,
+      trim: true
+    },
     priority: {
       type: String,
       enum: ['low', 'medium', 'high', 'urgent'],
@@ -80,6 +104,19 @@ const ticketSchema = new mongoose.Schema(
         quantity: { type: Number, min: 1 }
       },
       default: null
+    },
+  thirdPartyIssue: {
+  type: [
+    {
+      type: String,
+      enum: ['transformer_issue', 'voltage_function_issue', 'transformer_phase_issue', 'branding', 'theft']
+    }
+  ],
+  default: []
+},
+    thirdPartyIssueDescription: {
+      type: String,
+      trim: true
     },
     escalationHours: {
       type: Number,

@@ -45,7 +45,7 @@ export const getDashboard = async (req, res, next) => {
         { $match: filter },
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ]),
-      Ticket.countDocuments({ priority: 'urgent', status: { $in: ['resolved', 'closed'] } }),
+      Ticket.countDocuments({ ...filter, priority: 'urgent', status: { $in: ['resolved', 'closed'] } }),
       Ticket.find()
         .sort({ createdAt: -1 })
         .limit(10)
@@ -84,7 +84,7 @@ export const getSummary = async (req, res, next) => {
         Ticket.aggregate([{ $match: filter }, { $group: { _id: '$priority', count: { $sum: 1 } } }]),
         User.countDocuments({ isActive: true }),
         Department.countDocuments({}),
-        Ticket.countDocuments({ priority: 'urgent', status: { $nin: ['resolved', 'closed'] } })
+        Ticket.countDocuments({ ...filter, priority: 'urgent', status: { $nin: ['resolved', 'closed'] } })
       ]);
 
     const statusCounts = emptyStatusCounts();
@@ -92,10 +92,12 @@ export const getSummary = async (req, res, next) => {
       if (r._id) statusCounts[r._id] = r.count;
     });
 
+    console.log('Status Counts:', statusCounts);
+
     const openTickets = Object.entries(statusCounts)
       .filter(([status]) => OPEN_STATUSES.has(status))
       .reduce((sum, [, count]) => sum + count, 0);
-
+   console.log('Open Tickets:', openTickets);
     const closedTickets =
       (statusCounts.resolved || 0) + (statusCounts.closed || 0);
 

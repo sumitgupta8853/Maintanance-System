@@ -2,90 +2,140 @@ import amqplib from 'amqplib';
 import { notifyTicketEvent } from './pushNotification.js';
 import { logger } from './logger.js';
 
+const QUEUE = 'notification_queue';
+const RETRY_DELAY_MS = 5000;
+const HANDLER_TIMEOUT_MS = 30000;
+
+let connection;
 let channel;
-let consuming = false;
+let stopping = false;
+let restartTimer = null;
+
+// Never wait forever on FCM / DB calls
+const withTimeout = (promise, ms) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Handler timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+
+const scheduleRestart = () => {
+  if (stopping || restartTimer) return;
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    startNotificationConsumer();
+  }, RETRY_DELAY_MS);
+};
+
+const handleMessage = async (msg) => {
+  // null means the server cancelled the consumer
+  if (msg === null) {
+    logger.warn('Notification consumer was cancelled by the server');
+    return;
+  }
+
+  let event;
+  try {
+    event = JSON.parse(msg.content.toString());
+  } catch (parseErr) {
+    logger.error({ err: parseErr }, 'Failed to parse RabbitMQ message');
+    // An unparseable message can never succeed, so don't requeue it
+    channel.nack(msg, false, false);
+    return;
+  }
+
+  try {
+    const routingKey = msg.fields.routingKey || 'ticket:commented';
+
+    switch (routingKey) {
+      case 'ticket:created':
+        logger.info({ ticketId: event.ticketId }, '🎫 Ticket created event received');
+        break;
+
+      case 'ticket:commented':
+        if (event.ticketId && event.author) {
+          await withTimeout(
+            notifyTicketEvent({
+              ticket: { ticketNumber: event.ticketNumber || event.ticketId },
+              userId: event.author,
+              isInternalNote: event.isInternalNote || false,
+            }),
+            HANDLER_TIMEOUT_MS
+          );
+        }
+        logger.info({ ticketId: event.ticketId }, '💬 Comment notification sent');
+        break;
+
+      case 'ticket:closed':
+        logger.info({ ticketId: event.ticketId }, '🎟️ Ticket closed event received');
+        break;
+
+      default:
+        if (event.ticketId) {
+          await withTimeout(
+            notifyTicketEvent({
+              ticket: { ticketNumber: event.ticketNumber || event.ticketId },
+              userId: event.author,
+              isInternalNote: event.isInternalNote || false,
+            }),
+            HANDLER_TIMEOUT_MS
+          );
+        }
+    }
+
+    channel.ack(msg);
+    logger.debug({ routingKey, ticketId: event?.ticketId }, '📬 Notification processed');
+  } catch (err) {
+    logger.error({ err }, 'Notification processing error');
+    // Don't requeue: avoids an endless redelivery loop on a failing message
+    channel.nack(msg, false, false);
+  }
+};
 
 /**
- * Initialize and start the RabbitMQ notification consumer
- * Listens to ticket_events exchange and delivers Firebase push notifications
+ * Initialize and start the RabbitMQ notification consumer.
+ * Listens to the ticket_events exchange and delivers Firebase push notifications.
  */
 export const startNotificationConsumer = async () => {
+  stopping = false;
   try {
-    const conn = await amqplib.connect(process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672');
-    channel = await conn.createChannel();
+    connection = await amqplib.connect(
+      process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672'
+    );
+    channel = await connection.createChannel();
 
-    // Ensure queue exists and is bound
-    await channel.assertQueue('notification_queue', { durable: true, maxLength: 1000, deadLetterExchange: 'ticket_dlx' });
+    // Without these listeners, a closed channel crashes the whole process
+    connection.on('error', (err) =>
+      logger.error({ err }, 'RabbitMQ connection error (notification consumer)')
+    );
+    connection.on('close', () => {
+      logger.warn('RabbitMQ connection closed (notification consumer)');
+      scheduleRestart();
+    });
+    channel.on('error', (err) =>
+      logger.error({ err }, 'RabbitMQ channel error (notification consumer)')
+    );
 
-    // Start consuming messages
-    channel.consume('notification_queue', async (msg) => {
-      if (msg !== null && !consuming) {
-        let event;
-        try {
-          event = JSON.parse(msg.content.toString());
-        } catch (parseErr) {
-          logger.error({ err: parseErr }, 'Failed to parse RabbitMQ message');
-          channel.nack(msg, false, true);
-          return;
-        }
-
-        try {
-          // Map routing key to notification logic
-          const routingKey = msg.fields.routingKey || 'ticket:commented';
-
-          switch (routingKey) {
-            case 'ticket:created':
-              // Could send assignment notification to assigned engineer
-              logger.info('🎫 Ticket created event received', { ticketId: event.ticketId });
-              break;
-
-            case 'ticket:commented':
-              // Notify ticket author/assignee about new comment
-              if (event.ticketId && event.author) {
-                await notifyTicketEvent({
-                  ticket: { ticketNumber: event.ticketNumber || event.ticketId },
-                  userId: event.author,
-                  isInternalNote: event.isInternalNote || false
-                });
-              }
-              logger.info('💬 Comment notification sent', { ticketId: event.ticketId });
-              break;
-
-            case 'ticket:closed':
-              // Notify all stakeholders about ticket closure
-              logger.info('🎟️ Ticket closed event received', { ticketId: event.ticketId });
-              break;
-
-            default:
-              // Default to comment notification
-              if (event.ticketId) {
-                await notifyTicketEvent({
-                  ticket: { ticketNumber: event.ticketNumber || event.ticketId },
-                  userId: event.author,
-                  isInternalNote: event.isInternalNote || false
-                });
-              }
-          }
-
-          // Acknowledge message (remove from queue)
-          channel.ack(msg);
-          logger.debug('📬 Notification processed', { routingKey, ticketId: event?.ticketId });
-
-        } catch (err) {
-          logger.error({ err }, 'Notification processing error');
-          // NACK - requeue the message for later processing
-          channel.nack(msg, false, true);
-        }
-      }
+    // Must match the options in middlewares/publisher.js exactly
+    await channel.assertQueue(QUEUE, {
+      durable: true,
+      maxLength: 1000,
+      deadLetterExchange: 'ticket_dlx',
     });
 
-    consuming = true;
-    logger.info('🐇 RabbitMQ notification consumer started');
+    channel.prefetch(5);
+    await channel.consume(QUEUE, handleMessage, { noAck: false });
 
+    logger.info('🐇 RabbitMQ notification consumer started');
   } catch (err) {
     logger.error({ err }, 'Failed to start notification consumer');
-    // Retry after a delay
-    setTimeout(() => startNotificationConsumer(), 5000);
+    try {
+      await connection?.close();
+    } catch (_) {
+      /* connection may already be closed */
+    }
+    scheduleRestart();
   }
 };
 
@@ -93,13 +143,16 @@ export const startNotificationConsumer = async () => {
  * Stop the notification consumer
  */
 export const stop = async () => {
-  consuming = false;
-  if (channel) {
-    try {
-      await channel.close();
-    } catch (err) {
-      logger.error({ err }, 'Error closing notification consumer channel');
-    }
+  stopping = true;
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  try {
+    await channel?.close();
+    await connection?.close();
+  } catch (err) {
+    logger.error({ err }, 'Error closing notification consumer');
   }
 };
 

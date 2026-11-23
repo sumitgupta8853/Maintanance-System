@@ -19,7 +19,7 @@ import { logger } from "../utils/logger.js";
 const cfg = () => ({
   base: (process.env.HEALTH_API_BASE || "https://ocpphub.eeil.online/api/v1/technical/monitoring").replace(/\/+$/, ""),
   token: process.env.TECH_TOKEN || "",
-  roles: String(process.env.MONITORING_ROLES || "admin,customer_support_manager,technical_manager,service_engineer").split(",").map((s) => s.trim()).filter(Boolean),
+  roles: String(process.env.MONITORING_ROLES || "admin,customer_support_manager,technical_manager,service_engineer,cc_executive").split(",").map((s) => s.trim()).filter(Boolean),
   ttlMs: (process.env.MONITORING_CACHE_SECONDS === undefined || process.env.MONITORING_CACHE_SECONDS === ""
     ? 30 : Number(process.env.MONITORING_CACHE_SECONDS) || 0) * 1000,
 });
@@ -88,6 +88,79 @@ router.use((req, res, next) => {
 
 router.get("/overview", (req, res) => forward(req, res, "/overview", OVERVIEW_QUERY));
 router.get("/summary", (req, res) => forward(req, res, "/summary", SUMMARY_QUERY));
+
+// GET /api/monitoring/chargers - dropdown-friendly charger list (name, stationId, connectors)
+// Placed BEFORE /:ocppId so Express matches this static route first.
+router.get("/chargers", async (req, res) => {
+  const c = cfg();
+  if (!c.token) return res.status(503).json({ message: "Monitoring is not configured on the server" });
+
+  // Pagination params (defaults + caps)
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+
+  // Search filter (case-insensitive, matches chargerName or stationName)
+  const search = (req.query.search || "").trim().toLowerCase();
+
+  const url = c.base + "/overview?limit=2000";
+
+  // Cache key includes page + limit + search so different pages/filters are cached separately
+  const cacheKey = `${url}|page=${page}|limit=${limit}|search=${search}`;
+  const hit = cache.get(cacheKey);
+  if (hit && Date.now() - hit.at < c.ttlMs) return res.json(hit.body);
+
+  try {
+    if (!inflight.has(url)) inflight.set(url, callHub(url, c.token).finally(() => inflight.delete(url)));
+    const { status, body } = await inflight.get(url);
+
+    if (status === 200 && body) {
+      const raw = body.data;
+      const chargers = Array.isArray(raw) ? raw : (raw.data || []);
+
+      const transformed = chargers
+        .map((ch) => ({
+          ocppId: ch.ocppId,
+          chargerName: ch.chargerName,
+          stationId: ch.station_id || ch.stationId || ch.station,
+          stationName: ch.stationName || ch.station,
+          connectors: ch.connectors || [],
+          isOnline: ch.online !== false,
+          severity: ch.severity,
+        }))
+        // Apply search filter after transformation (case-insensitive partial match)
+        .filter((ch) => {
+          if (!search) return true;
+          return (
+            (ch.chargerName || "").toLowerCase().includes(search) ||
+            (ch.stationName || "").toLowerCase().includes(search)
+          );
+        });
+
+      const total = transformed.length;
+      const totalPages = Math.ceil(total / limit);
+      const start = (page - 1) * limit;
+      const paginated = transformed.slice(start, start + limit);
+
+      const response = {
+        chargers: paginated,
+        pagination: { page, limit, total, totalPages },
+      };
+
+      if (c.ttlMs > 0) {
+        if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value);
+        cache.set(cacheKey, { at: Date.now(), body: response });
+      }
+      return res.json(response);
+    }
+    if (status === 400 || status === 404) return res.status(status).json({ message: (body && body.message) || "Request not accepted" });
+    logger.error({ component: "Monitoring" }, `hub answered ${status} for /chargers${status === 401 || status === 403 ? " - check TECH_TOKEN" : ""}`);
+    return res.status(502).json({ message: "Monitoring service is unavailable" });
+  } catch (e) {
+    logger.error({ component: "Monitoring", err: e }, `hub call failed for /chargers: ${e.message}`);
+    return res.status(e.name === "TimeoutError" ? 504 : 502).json({ message: "Monitoring service is unavailable" });
+  }
+});
+
 router.get("/:ocppId", (req, res) => forward(req, res, "/" + encodeURIComponent(req.params.ocppId), []));
 
 export default router;

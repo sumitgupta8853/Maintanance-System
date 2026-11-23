@@ -70,7 +70,7 @@ try {
             "ticket:view_department", "ticket:assign", "ticket:close", "ticket:update_status", "ticket:view",
             "ticket:edit", "ticket:comment", "users:create", "report:read",
             "role:view", "department:view",
-            "department:manage",
+            "department:manage", "ticket:third_party_issue",
         ],
         departmentId: engDept._id,
     });
@@ -80,7 +80,8 @@ try {
         description: "Service Engineer",
         permissions: [
             "ticket:view_assigned", "ticket:update_status", "ticket:close",
-            "ticket:view", "ticket:edit", "ticket:comment",
+            "ticket:view", "ticket:comment", "ticket:create", "ticket:edit",
+            "ticket:third_party_issue",
         ],
         departmentId: engDept._id,
     });
@@ -97,7 +98,7 @@ try {
         permissions: [
             "ticket:create", "ticket:view", "ticket:view_department", "ticket:assign",
             "ticket:edit", "ticket:close", "ticket:update_status", "ticket:comment",
-            "ticket:all_departments", "users:view"
+            "ticket:all_departments", "users:view", "ticket:third_party_issue"
         ],
     });
 

@@ -58,6 +58,16 @@ export function ticketAccessFilter(user) {
     return {};
   }
 
+  const roleName = user.role?.name;
+
+  // Service Engineer: only their own tickets (created or assigned) — no department-wide scope
+  if (roleName === 'service_engineer') {
+    const or = [];
+    or.push({ createdBy: user._id });
+    or.push({ assignedTo: user._id });
+    return { $or: or };
+  }
+
   const or = [];
 
   // Everyone: tickets they created
