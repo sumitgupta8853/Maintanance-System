@@ -1,42 +1,57 @@
 import User from '../Models/User.js';
 import RefreshToken from '../Models/RefreshToken.js';
+import Otp from '../Models/Otp.js';
 import {
     hash,
     signAccessToken,
     issueRefreshToken,
     verifyRefreshToken,
 } from '../utils/Token.js';
+import { generateOtp } from '../utils/otp.js';
+import { sendOtp as sendOtpSms } from '../utils/sendOtp.js';
+import { hashOtp } from '../Models/Otp.js';
 
 // If a token was revoked less than this long ago, treat a second use as a
 // harmless concurrent request (e.g. two tabs), not as token theft.
 const REUSE_GRACE_MS = Number(process.env.REFRESH_REUSE_GRACE_MS) || 15 * 1000;
 
+const OTP_EXPIRES_IN_MS =
+    Number(process.env.OTP_EXPIRES_IN_MIN) * 60 * 1000 || 10 * 60 * 1000; // default 10 min
+const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS) || 5;
+
 const userPayload = (u) => ({
     id: u._id,
     name: u.name,
     email: u.email,
+    phone: u.phone,
     photo: u.photo,
     role: u.role.name,
     permissions: u.role.permissions,
 });
 
-export const login = async (req, res, next) => {
+/**
+ * Step 1 of OTP login: generate a 6-digit OTP, hash it, store it with an expiry,
+ * and send it to the user's phone number.
+ * Body: { phone: string }
+ */
+export const sendOtp = async (req, res, next) => {
     try {
-        const { email, password } = req.body;
+        const { phone } = req.body;
 
-        if (!email || !password) {
+        if (!phone) {
             return res.status(400).json({
-                message: 'Email and password are required',
+                message: 'Phone number is required',
             });
         }
 
-        const user = await User.findOne({ email: email.toLowerCase() })
-            .select('+password')
-            .populate('role');
+        // Normalize phone: keep as-is (E.164 preferred). Trim whitespace.
+        const normalizedPhone = String(phone).trim();
 
-        if (!user || !(await user.comparePassword(password))) {
-            return res.status(401).json({
-                message: 'Invalid email or password',
+        // Resolve user by phone (must exist and be active)
+        const user = await User.findOne({ phone: normalizedPhone }).populate('role');
+        if (!user) {
+            return res.status(404).json({
+                message: 'No account found with this phone number',
             });
         }
 
@@ -46,7 +61,104 @@ export const login = async (req, res, next) => {
             });
         }
 
+        // Generate OTP and hash it (never store plaintext)
+        const code = generateOtp();
+        const codeHash = hashOtp(code);
+        const expiresAt = new Date(Date.now() + OTP_EXPIRES_IN_MS);
+
+        // Upsert: one active unverified OTP per phone at a time
+        await Otp.findOneAndUpdate(
+            { phone: normalizedPhone, verified: false },
+            {
+                $set: { codeHash, expiresAt, attempts: 0 },
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+
+        // Send the OTP via SMS transport (dev mode logs to console)
+        await sendOtpSms(normalizedPhone, code);
+
         return res.json({
+            message: 'OTP sent successfully',
+            phone: normalizedPhone,
+            // In production, do NOT return the code. It's returned here only for
+            // local dev/testing when SMS provider is not configured.
+            ...(process.env.NODE_ENV === 'development' ? { otp: code } : {}),
+            expiresIn: Math.round(OTP_EXPIRES_IN_MS / 1000),
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * Step 2 of OTP login: verify the OTP code and issue JWT access + refresh tokens.
+ * Body: { phone: string, otp: string }
+ */
+export const verifyOtp = async (req, res, next) => {
+    try {
+        const { phone, otp } = req.body;
+
+        if (!phone || !otp) {
+            return res.status(400).json({
+                message: 'Phone number and OTP are required',
+            });
+        }
+
+        const normalizedPhone = String(phone).trim();
+        const code = String(otp).trim();
+
+        const otpRecord = await Otp.findOne({
+            phone: normalizedPhone,
+            verified: false,
+        });
+
+        if (!otpRecord) {
+            return res.status(404).json({
+                message: 'No active OTP found for this phone number. Request a new one.',
+            });
+        }
+
+        // Expired?
+        if (otpRecord.expiresAt < new Date()) {
+            return res.status(410).json({
+                message: 'OTP has expired. Request a new one.',
+            });
+        }
+
+        // Max attempts reached?
+        if (otpRecord.attempts >= OTP_MAX_ATTEMPTS) {
+            return res.status(429).json({
+                message: 'Too many failed OTP attempts. Request a new one.',
+            });
+        }
+
+        // Increment attempts
+        otpRecord.attempts += 1;
+        await otpRecord.save();
+
+        // Compare hashed OTP
+        const isMatch = hashOtp(code) === otpRecord.codeHash;
+        if (!isMatch) {
+            return res.status(401).json({
+                message: 'Invalid OTP code',
+            });
+        }
+
+        // Mark OTP as verified (consumed)
+        otpRecord.verified = true;
+        await otpRecord.save();
+
+        // Load user and check active status
+        const user = await User.findOne({ phone: normalizedPhone }).populate('role');
+        if (!user || !user.isActive) {
+            return res.status(401).json({
+                message: 'User not found or deactivated',
+            });
+        }
+
+        return res.json({
+            message: 'OTP verified successfully',
             accessToken: signAccessToken(user),
             refreshToken: await issueRefreshToken(user),
             user: userPayload(user),

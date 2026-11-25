@@ -1,7 +1,8 @@
 import express from 'express';
 
 import {
-  login,
+  sendOtp,
+  verifyOtp,
   refresh,
   logout,
   logoutAll,
@@ -12,10 +13,13 @@ import { authenticate } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-router.post('/login', login);
+// OTP-based login flow
+router.post('/send-otp', sendOtp);
+router.post('/verify-otp', verifyOtp);
+
 router.post('/refresh', refresh);
 router.post('/logout', logout);
 router.post('/logout-all', authenticate, logoutAll);
 router.get('/me', authenticate, me);
 
-export const authRoutes = router;
+export const authRoutes = router; 

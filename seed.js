@@ -102,18 +102,79 @@ try {
         ],
     });
 
-    // --- Admin user ---
-    const email = (process.env.ADMIN_EMAIL || "admin@example.com").toLowerCase();
-    if (await User.findOne({ email })) {
-        logger.info(`Admin user already exists: ${email}`);
-    } else {
-        await User.create({
-            name: process.env.ADMIN_NAME || "Super Admin",
-            email,
-            password: process.env.ADMIN_PASSWORD || "Admin@12345",
-            role: adminRole._id,
+    async function upsertUser({ name, email, password, role, phone }) {
+        let user = await User.findOne({ email });
+        if (!user) {
+            user = await User.create({
+                name,
+                email,
+                password,
+                role,
+                phone,
+            });
+            logger.info(`Created user: ${email} (${phone})`);
+            return user;
+        }
+        if (user.phone !== phone) {
+            user.phone = phone;
+            await user.save();
+            logger.info(`Updated phone for user: ${email}`);
+        }
+        return user;
+    }
+
+    // --- Users (one per role, each with a phone for OTP login) ---
+    const adminEmail = (process.env.ADMIN_EMAIL || "admin@example.com").toLowerCase();
+    const adminUser = await upsertUser({
+        name: process.env.ADMIN_NAME || "Super Admin",
+        email: adminEmail,
+        password: process.env.ADMIN_PASSWORD || "Admin@12345",
+        role: adminRole._id,
+        phone: "+917277506057",
+    });
+
+    const tmRole = await Role.findOne({ name: "technical_manager" });
+    if (tmRole) {
+        await upsertUser({
+            name: "Technical Manager",
+            email: "tm@example.com",
+            password: "Test@1234",
+            role: tmRole._id,
+            phone: "+919000000002",
         });
-        logger.info(`Created admin user: ${email}`);
+    }
+
+    const seRole = await Role.findOne({ name: "service_engineer" });
+    if (seRole) {
+        await upsertUser({
+            name: "Service Engineer",
+            email: "se@example.com",
+            password: "Test@1234",
+            role: seRole._id,
+            phone: "+919000000003",
+        });
+    }
+
+    const cceRole = await Role.findOne({ name: "cc_executive" });
+    if (cceRole) {
+        await upsertUser({
+            name: "CC Executive",
+            email: "cce@example.com",
+            password: "Test@1234",
+            role: cceRole._id,
+            phone: "+919000000004",
+        });
+    }
+
+    const csmRole = await Role.findOne({ name: "customer_support_manager" });
+    if (csmRole) {
+        await upsertUser({
+            name: "Customer Support Manager",
+            email: "csm@example.com",
+            password: "Test@1234",
+            role: csmRole._id,
+            phone: "+919000000005",
+        });
     }
 } catch (err) {
     logger.error({ err }, "Seed failed");

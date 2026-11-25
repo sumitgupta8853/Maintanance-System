@@ -127,6 +127,10 @@ JWT_REFRESH_SECRET=change_this_refresh_secret
 ACCESS_TOKEN_EXPIRES_IN=15m
 REFRESH_TOKEN_EXPIRES_IN=7d
 
+# OTP login config
+OTP_EXPIRES_IN_MIN=10
+OTP_MAX_ATTEMPTS=5
+
 # Seed defaults for the first admin user
 ADMIN_NAME=Super Admin
 ADMIN_EMAIL=admin@example.com
@@ -161,17 +165,32 @@ Run it again safely — it is idempotent (won't duplicate roles or users).
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/login` | Email/password login → returns `accessToken`, `refreshToken`, `user` | No |
+| `POST` | `/send-otp` | Send a 6-digit OTP to the user's phone number | No |
+| `POST` | `/verify-otp` | Verify OTP and issue `accessToken`, `refreshToken`, `user` | No |
+| `POST` | `/login` | Email/password login → returns `accessToken`, `refreshToken`, `user` (legacy, kept for backward compatibility) | No |
 | `POST` | `/refresh` | Exchange refresh token for new access + refresh token pair (rotation) | No |
 | `POST` | `/logout` | Delete a single refresh token (logout this device) | No |
 | `POST` | `/logout-all` | Delete all refresh tokens for the user (logout all devices) | Yes (Bearer) |
 | `GET` | `/me` | Return current user profile | Yes (Bearer) |
+
+### OTP Login Flow
+
+1. **Request OTP** — `POST /api/auth/send-otp` with `{ "phone": "+919876543210" }`
+   - Server looks up the user by phone, generates a 6-digit OTP, hashes it, stores it with a 10-minute expiry, and sends it via SMS.
+   - In development (`NODE_ENV=development`), the OTP is also returned in the response for testing.
+
+2. **Verify OTP** — `POST /api/auth/verify-otp` with `{ "phone": "+919876543210", "otp": "123456" }`
+   - Server validates the OTP hash, checks expiry and attempt limits, then issues a JWT access token + refresh token pair on success.
+   - The OTP is marked as verified (consumed) after a successful check.
+
+3. **Use tokens** — Send the `accessToken` as `Authorization: Bearer <accessToken>` on subsequent requests. Use `/refresh` to rotate the access token when it expires.
 
 ### Token Details
 
 - **Access Token**: signed with `JWT_ACCESS_SECRET`, expires in `ACCESS_TOKEN_EXPIRES_IN` (15m). Payload: `{ id, role.name }`. Sent with every API request as `Authorization: Bearer <token>`.
 - **Refresh Token**: signed with `JWT_REFRESH_SECRET`, expires in `REFRESH_TOKEN_EXPIRES_IN` (7d). Payload: `{ id, jti }`. Stored as a SHA-256 hash in MongoDB with a TTL index.
 - **Refresh Rotation**: On `/refresh`, the old refresh token hash is deleted and a new one is issued. If a token is reused (not found in store), **all** refresh tokens for that user are deleted — indicating possible theft or replay.
+- **OTP Code**: 6-digit numeric code, SHA-256 hashed before storage. Expires after `OTP_EXPIRES_IN_MIN` (default 10 minutes). Max `OTP_MAX_ATTEMPTS` (default 5) verification attempts per OTP. One active unverified OTP per phone at a time.
 
 ### Middleware (`middlewares/auth.js`)
 
@@ -225,7 +244,42 @@ Permissions are stored on the `Role` model as a string array (`permissions: [Str
 
 ### Auth
 
-**`POST /api/auth/login`**
+**`POST /api/auth/send-otp`**
+```json
+// Request
+{ "phone": "+919876543210" }
+
+// Response (200)
+{
+  "message": "OTP sent successfully",
+  "phone": "+919876543210",
+  "expiresIn": 600
+}
+// In development, also returns: { "otp": "123456" }
+```
+
+**`POST /api/auth/verify-otp`**
+```json
+// Request
+{ "phone": "+919876543210", "otp": "123456" }
+
+// Response (200)
+{
+  "message": "OTP verified successfully",
+  "accessToken": "<jwt>",
+  "refreshToken": "<jwt>",
+  "user": {
+    "id": "...",
+    "name": "...",
+    "email": "...",
+    "phone": "+919876543210",
+    "role": "admin",
+    "permissions": ["*"],
+  }
+}
+```
+
+**`POST /api/auth/login`** (legacy email/password)
 ```json
 // Request
 { "email": "admin@example.com", "password": "Admin@12345" }
