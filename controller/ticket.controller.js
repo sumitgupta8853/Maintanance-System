@@ -3,7 +3,7 @@ import TicketHistory from '../Models/TicketHistory.js';
 import TicketComment from '../Models/TicketComment.js';
 import User from '../Models/User.js';
 import Department from '../Models/Department.js';
-import { ticketAccessFilter, ticketInScope } from '../utils/ticketAccess.js';
+import { ticketAccessFilter, ticketInScope, canViewNearbyAutoTicket } from '../utils/ticketAccess.js';
 import { auditLog } from '../utils/audit.js';
 import { logger } from '../utils/logger.js';
 import { notifyTicketEvent } from '../utils/pushNotification.js';
@@ -718,7 +718,7 @@ export const getTicket = async (req, res, next) => {
     const user = req.user;
     const ticket = await Ticket.findById(req.params.id).populate('createdBy', 'name email').populate('assignedTo', 'name email').populate('assignedBy', 'name email').populate('departmentId', 'name');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
-    if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
+    if (!ticketInScope(user, ticket) && !canViewNearbyAutoTicket(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const escalated = await checkAndEscalateTicket(ticket);
     return res.json(withType(escalated));
   } catch (err) { next(err); }
@@ -753,7 +753,7 @@ export const getTicketHistory = async (req, res, next) => {
     const user = req.user;
     const ticket = await Ticket.findById(req.params.id);
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
-    if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
+    if (!ticketInScope(user, ticket) && !canViewNearbyAutoTicket(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const history = await TicketHistory.find({ ticketId: req.params.id }).populate('changedBy', 'name email').sort({ createdAt: -1 });
     return res.json(history);
   } catch (err) { next(err); }
@@ -763,7 +763,7 @@ export const getTicketComments = async (req, res, next) => {
     const user = req.user;
     const ticket = await Ticket.findById(req.params.id);
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
-    if (!ticketInScope(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
+    if (!ticketInScope(user, ticket) && !canViewNearbyAutoTicket(user, ticket)) return res.status(404).json({ message: 'Ticket not found' });
     const comments = await TicketComment.find({ ticketId: req.params.id }).populate('author', 'name email').sort({ createdAt: 1 });
     return res.json(comments);
   } catch (err) { next(err); }

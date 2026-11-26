@@ -61,7 +61,8 @@ import departmentRoutes from "./routes/department.Routes.js";
 import ticketRoutes from "./routes/ticket.Routes.js";
 import monitoringRoutes from "./routes/monitoring.Routes.js";
 import dashboardRoutes from "./routes/dashboard.Routes.js";
-
+import stationRoutes from "./routes/station.Routes.js";
+import nearbyTicketRoutes from "./routes/nearbyTickets.Routes.js"
 
 
 
@@ -112,7 +113,8 @@ app.use("/api/support/tickets", ticketRoutes);
 app.use("/api/monitoring", monitoringRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/notifications", notificationRoutes);
-
+app.use("/api/stations", stationRoutes);;
+app.use("/api/nearby-tickets", nearbyTicketRoutes);
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 
 // Central error handler

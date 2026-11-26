@@ -19,6 +19,8 @@ const OTP_EXPIRES_IN_MS =
     Number(process.env.OTP_EXPIRES_IN_MIN) * 60 * 1000 || 10 * 60 * 1000; // default 10 min
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS) || 5;
 
+const STATIC_OTP_CODE = process.env.STATIC_OTP_CODE || null;
+
 const userPayload = (u) => ({
     id: u._id,
     name: u.name,
@@ -62,7 +64,12 @@ export const sendOtp = async (req, res, next) => {
         }
 
         // Generate OTP and hash it (never store plaintext)
-        const code = generateOtp();
+        let code;
+        if (STATIC_OTP_CODE) {
+          code = STATIC_OTP_CODE;
+        } else {
+          code = generateOtp();
+        }
         const codeHash = hashOtp(code);
         const expiresAt = new Date(Date.now() + OTP_EXPIRES_IN_MS);
 
@@ -107,6 +114,25 @@ export const verifyOtp = async (req, res, next) => {
 
         const normalizedPhone = String(phone).trim();
         const code = String(otp).trim();
+
+        // If a static OTP code is configured and matches, skip the OTP record lookup
+        // This allows a single static OTP to work for all users/roles without needing
+        // a prior sendOtp call
+        if (STATIC_OTP_CODE && code === STATIC_OTP_CODE) {
+          // Skip OTP record lookup, go straight to user lookup
+          const user = await User.findOne({ phone: normalizedPhone }).populate('role');
+          if (!user || !user.isActive) {
+            return res.status(401).json({
+              message: 'User not found or deactivated',
+            });
+          }
+          return res.json({
+            message: 'OTP verified successfully',
+            accessToken: signAccessToken(user),
+            refreshToken: await issueRefreshToken(user),
+            user: userPayload(user),
+          });
+        }
 
         const otpRecord = await Otp.findOne({
             phone: normalizedPhone,

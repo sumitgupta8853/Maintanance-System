@@ -98,3 +98,24 @@ export function ticketInScope(user, ticket) {
 
   return false;
 }
+
+// Service Engineer can VIEW (read-only) full details of nearby auto tickets
+// that are unassigned and not yet closed. This does NOT grant write access.
+export function canViewNearbyAutoTicket(user, ticket) {
+  if (!user || !ticket) return false;
+
+  const roleName = user.role?.name;
+  if (roleName !== 'service_engineer') return false;
+
+  // Only auto-generated tickets
+  if (ticket.type !== 'auto') return false;
+
+  // Only unassigned tickets
+  if (ticket.assignedTo) return false;
+
+  // Only open/urgent tickets (not closed/resolved/reopened)
+  const closedStatuses = ['resolved', 'closed', 'reopened'];
+  if (closedStatuses.includes(ticket.status)) return false;
+
+  return true;
+}
