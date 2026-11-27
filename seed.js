@@ -102,23 +102,22 @@ try {
         ],
     });
 
-    async function upsertUser({ name, email, password, role, phone }) {
-        let user = await User.findOne({ email });
+    async function upsertUser({ name, email, role, phone }) {
+        let user = await User.findOne({ phone });
         if (!user) {
             user = await User.create({
                 name,
                 email,
-                password,
                 role,
                 phone,
             });
             logger.info(`Created user: ${email} (${phone})`);
             return user;
         }
-        if (user.phone !== phone) {
-            user.phone = phone;
+        if (user.email !== email) {
+            user.email = email;
             await user.save();
-            logger.info(`Updated phone for user: ${email}`);
+            logger.info(`Updated email for user: ${phone}`);
         }
         return user;
     }
@@ -128,7 +127,6 @@ try {
     const adminUser = await upsertUser({
         name: process.env.ADMIN_NAME || "Super Admin",
         email: adminEmail,
-        password: process.env.ADMIN_PASSWORD || "Admin@12345",
         role: adminRole._id,
         phone: "+917277506057",
     });
@@ -138,7 +136,6 @@ try {
         await upsertUser({
             name: "Technical Manager",
             email: "tm@example.com",
-            password: "Test@1234",
             role: tmRole._id,
             phone: "+919000000002",
         });
@@ -149,7 +146,6 @@ try {
         await upsertUser({
             name: "Service Engineer",
             email: "se@example.com",
-            password: "Test@1234",
             role: seRole._id,
             phone: "+919000000003",
         });
@@ -160,7 +156,6 @@ try {
         await upsertUser({
             name: "CC Executive",
             email: "cce@example.com",
-            password: "Test@1234",
             role: cceRole._id,
             phone: "+919000000004",
         });
@@ -171,7 +166,6 @@ try {
         await upsertUser({
             name: "Customer Support Manager",
             email: "csm@example.com",
-            password: "Test@1234",
             role: csmRole._id,
             phone: "+919000000005",
         });

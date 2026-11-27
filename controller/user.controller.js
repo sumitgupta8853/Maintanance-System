@@ -4,13 +4,12 @@ import Role from '../Models/Role.js';
 import Department from '../Models/Department.js';
 import { auditLog } from '../utils/audit.js';
 import { logger } from '../utils/logger.js';
-import bcrypt from 'bcryptjs';   // or 'bcrypt', whichever is in your package.json
 
 const PRIVILEGED_ROLES = ['admin', 'technical_manager'];
 
 export const createUser = async (req, res, next) => {
   try {
-    const { name, email, password, role, departmentId } = req.body;
+    const { name, email, phone, role, departmentId } = req.body;
     logger.info('Create User Request Body:', req.body);
     // Validate role ID exists in MongoDB
     const targetRole = await Role.findById(role);
@@ -84,7 +83,7 @@ export const createUser = async (req, res, next) => {
     const user = await User.create({
       name,
       email,
-      password,
+      phone,
       role,
       departmentId,
     });
@@ -274,7 +273,7 @@ export const updateProfile = async (req, res, next) => {
       return res.status(403).json({ message: 'Forbidden: you can only edit your own profile' });
     }
 
-    const { name, email } = req.body || {};
+    const { name, email, phone } = req.body || {};
     const updates = {};
 
     if (name !== undefined) {
@@ -287,6 +286,14 @@ export const updateProfile = async (req, res, next) => {
         return res.status(400).json({ message: 'Email already exists' });
       }
       updates.email = email;
+    }
+
+    if (phone !== undefined) {
+      const existingUser = await User.findOne({ phone });
+      if (existingUser && existingUser._id.toString() !== req.params.id) {
+        return res.status(400).json({ message: 'Phone already exists' });
+      }
+      updates.phone = phone;
     }
 
     // Photo uploaded via multer (field name: "photo")
@@ -321,52 +328,6 @@ export const updateProfile = async (req, res, next) => {
     });
 
    return res.json(user);
-  } catch (err) {
-    next(err);
-  }
-};
-
-// Change user password
-export const changePassword = async (req, res, next) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    console.log('Change Password Request Body:', req.body);
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: 'Current password and new password are required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'New password must be at least 6 characters' });
-    }
-
-    const user = await User.findById(req.params.id).select('+password');
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Check if the current password is correct
-    const isMatch = await user.comparePassword(currentPassword);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Current password is incorrect' });
-    }
-
-    // Hash the new password
-    user.password = newPassword;
-    await user.save();
-
-    await auditLog({
-      actor: req.user._id,
-      action: 'user:password_change',
-      target: user,
-      targetType: 'User',
-      targetId: user._id,
-      outcome: 'success',
-      req,
-    });
-
-    return res.json({ message: 'Password changed successfully' });
   } catch (err) {
     next(err);
   }
