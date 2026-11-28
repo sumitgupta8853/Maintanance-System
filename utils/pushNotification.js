@@ -348,12 +348,16 @@ async function resolveNotifyUsers(ticket, eventType, actorId, userModel = User) 
       break;
 
     case 'ticket_assigned':
+      // Notify the assigned engineer (service engineer / technical manager the ticket was assigned to)
+      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
       // Notify department managers (technical_manager, wildcard, or ticket:view_department)
-      // when a ticket is self-assigned — not the engineer who assigned it to themselves
+      // so they stay aware of assignments in their department
       if (ticket.departmentId) {
         const deptUsers = await getDepartmentNotifyUsers(ticket.departmentId, userModel);
         for (const id of deptUsers) notify.add(id);
       }
+      // Don't notify the actor (the manager/engineer who performed the assignment)
+      if (actorId) notify.delete(actorId.toString());
       break;
 
     case 'ticket_status_updated':

@@ -156,3 +156,60 @@ test('ticket_status_updated without department still notifies createdBy/assigned
   const ids = [...result].sort();
   assert.deepStrictEqual(ids, ['u-assigner', 'u-creator']);
 });
+
+test('ticket_assigned notifies the assigned engineer and department managers, but not the assigning manager', async (t) => {
+  const { resolveNotifyUsers } = await importModule();
+  const deptUsers = [
+    makeUser('u-tm', 'technical_manager'),      // assigning manager
+    makeUser('u-other-tm', 'technical_manager'), // other department manager
+  ];
+  const userModel = stubUserModel(deptUsers);
+
+  const ticket = ticketWith('dept-1', 'u-creator', 'u-engineer', 'u-tm');
+  const result = await resolveNotifyUsers(
+    ticket,
+    'ticket_assigned',
+    'u-tm', // actor = assigning technical manager
+    userModel
+  );
+
+  const ids = [...result].sort();
+  // assigned engineer + other department manager; assigning manager excluded
+  assert.deepStrictEqual(ids, ['u-engineer', 'u-other-tm']);
+});
+
+test('ticket_assigned self-assign notifies department managers but not the self-assigning engineer', async (t) => {
+  const { resolveNotifyUsers } = await importModule();
+  const deptUsers = [makeUser('u-tm', 'technical_manager')];
+  const userModel = stubUserModel(deptUsers);
+
+  // Engineer self-assigns: assignedTo === actorId
+  const ticket = ticketWith('dept-1', 'u-creator', 'u-engineer', 'u-engineer');
+  const result = await resolveNotifyUsers(
+    ticket,
+    'ticket_assigned',
+    'u-engineer', // actor = the engineer who self-assigned
+    userModel
+  );
+
+  const ids = [...result].sort();
+  // Only department managers; self-assigning engineer excluded
+  assert.deepStrictEqual(ids, ['u-tm']);
+});
+
+test('ticket_assigned without assignedTo still notifies department managers', async (t) => {
+  const { resolveNotifyUsers } = await importModule();
+  const deptUsers = [makeUser('u-tm', 'technical_manager')];
+  const userModel = stubUserModel(deptUsers);
+
+  const ticket = ticketWith('dept-1', 'u-creator', undefined, 'u-assigner');
+  const result = await resolveNotifyUsers(
+    ticket,
+    'ticket_assigned',
+    'u-assigner', // actor is not a department manager
+    userModel
+  );
+
+  const ids = [...result].sort();
+  assert.deepStrictEqual(ids, ['u-tm']);
+});
