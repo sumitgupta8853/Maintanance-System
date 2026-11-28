@@ -10,7 +10,8 @@ import {
   getRecentTickets,
   getChargerHealth,
   getEngineers,
-  getActivity
+  getActivity,
+  getCalendarSummary
 } from '../controller/dashboard.controller.js';
 
 import { authenticate } from '../middlewares/auth.js';
@@ -30,5 +31,6 @@ router.get('/recent', getRecentTickets);
 router.get('/charger-health', getChargerHealth);
 router.get('/engineers', getEngineers);
 router.get('/activity', getActivity);
+router.get('/calendar-summary', getCalendarSummary);
 
 export default router;

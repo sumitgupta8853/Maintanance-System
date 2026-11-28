@@ -93,6 +93,7 @@ const ticketSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+    selfAssigned: { type: Boolean, default: false },
     resolutionType: {
       type: String,
       enum: ['fully_repaired', 'partially_repaired', 'part_missing', 'spare_part_required', 'fault_not_identified', 'additional_fault_found', 'repair_blocked', 'no_fault_found'],
@@ -105,15 +106,15 @@ const ticketSchema = new mongoose.Schema(
       },
       default: null
     },
-  thirdPartyIssue: {
-  type: [
-    {
-      type: String,
-      enum: ['transformer_issue', 'voltage_function_issue', 'transformer_phase_issue', 'branding', 'theft']
-    }
-  ],
-  default: []
-},
+    thirdPartyIssue: {
+      type: [
+        {
+          type: String,
+          enum: ['transformer_issue', 'voltage_function_issue', 'transformer_phase_issue', 'branding', 'theft']
+        }
+      ],
+      default: []
+    },
     thirdPartyIssueDescription: {
       type: String,
       trim: true

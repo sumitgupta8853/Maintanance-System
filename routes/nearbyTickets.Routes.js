@@ -3,13 +3,7 @@ import mongoose from "mongoose";
 import Ticket from "../Models/Ticket.js";
 import { authenticate } from "../middlewares/auth.js";
 import { logger } from "../utils/logger.js";
-import {
-  requestAssignment,
-  approveRequest,
-  rejectRequest,
-  getMyRequests,
-  getPendingRequests,
-} from "../controller/assignmentRequest.controller.js";
+import { selfAssignTicket } from "../controller/assignmentRequest.controller.js";
 
 const list = (v, d) => String(v || d).split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -183,11 +177,6 @@ export async function nearbyTickets(req, res) {
 const router = Router();
 router.get("/nearby", authenticate, nearbyTickets);
 
-// Assignment request routes (service engineer requests assignment; admin/CSM/TM approve/reject)
-router.post("/:ticketId/request-assign", authenticate, requestAssignment);
-router.get("/requests/my", authenticate, getMyRequests);
-router.get("/requests/pending", authenticate, getPendingRequests);
-router.post("/requests/:id/approve", authenticate, approveRequest);
-router.post("/requests/:id/reject", authenticate, rejectRequest);
+router.post("/:ticketId/self-assign", authenticate, selfAssignTicket);
 
 export default router;

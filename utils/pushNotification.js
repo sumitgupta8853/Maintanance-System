@@ -307,42 +307,64 @@ function ticketPayload(ticket, eventType, actorName = 'System') {
 }
 
 /**
+ * Return active users in a department who should receive ticket notifications:
+ * technical_manager role, wildcard (*) permission, or ticket:view_department permission.
+ * Returns a Set of unique user ObjectId strings.
+ */
+async function getDepartmentNotifyUsers(departmentId, userModel = User) {
+  const userIds = new Set();
+  if (!departmentId) return userIds;
+  const managers = await userModel.find({
+    departmentId,
+    isActive: true,
+  }).populate('role');
+  for (const m of managers) {
+    const roleName = m.role?.name;
+    const perms = m.role?.permissions || [];
+    if (
+      roleName === 'technical_manager' ||
+      perms.includes('*') ||
+      perms.includes('ticket:view_department')
+    ) {
+      userIds.add(m._id.toString());
+    }
+  }
+  return userIds;
+}
+
+/**
  * Determine which users should be notified for a given ticket event.
  * Returns an array of unique user ObjectIds.
  */
-async function resolveNotifyUsers(ticket, eventType, actorId) {
+async function resolveNotifyUsers(ticket, eventType, actorId, userModel = User) {
   const notify = new Set();
 
   switch (eventType) {
     case 'ticket_created':
-      // Notify department managers (technical_manager in the ticket's department)
       if (ticket.departmentId) {
-        const managers = await User.find({
-          departmentId: ticket.departmentId,
-          isActive: true,
-        }).populate('role');
-        for (const m of managers) {
-          const roleName = m.role?.name;
-          const perms = m.role?.permissions || [];
-          if (
-            roleName === 'technical_manager' ||
-            perms.includes('*') ||
-            perms.includes('ticket:view_department')
-          ) {
-            notify.add(m._id.toString());
-          }
-        }
+        const deptUsers = await getDepartmentNotifyUsers(ticket.departmentId, userModel);
+        for (const id of deptUsers) notify.add(id);
       }
       break;
 
     case 'ticket_assigned':
-      if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
+      // Notify department managers (technical_manager, wildcard, or ticket:view_department)
+      // when a ticket is self-assigned — not the engineer who assigned it to themselves
+      if (ticket.departmentId) {
+        const deptUsers = await getDepartmentNotifyUsers(ticket.departmentId, userModel);
+        for (const id of deptUsers) notify.add(id);
+      }
       break;
 
     case 'ticket_status_updated':
       if (ticket.createdBy) notify.add(ticket.createdBy.toString());
       if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
       if (ticket.assignedBy) notify.add(ticket.assignedBy.toString());
+      // Notify department managers (technical_manager, wildcard, or ticket:view_department)
+      if (ticket.departmentId) {
+        const deptUsers = await getDepartmentNotifyUsers(ticket.departmentId, userModel);
+        for (const id of deptUsers) notify.add(id);
+      }
       if (actorId) notify.delete(actorId.toString()); // don't notify the actor
       break;
 
@@ -356,6 +378,11 @@ async function resolveNotifyUsers(ticket, eventType, actorId) {
       if (ticket.createdBy) notify.add(ticket.createdBy.toString());
       if (ticket.assignedTo) notify.add(ticket.assignedTo.toString());
       if (ticket.assignedBy) notify.add(ticket.assignedBy.toString());
+      // Notify department managers (technical_manager, wildcard, or ticket:view_department)
+      if (ticket.departmentId) {
+        const deptUsers = await getDepartmentNotifyUsers(ticket.departmentId, userModel);
+        for (const id of deptUsers) notify.add(id);
+      }
       if (actorId) notify.delete(actorId.toString()); // don't notify the actor
       break;
   }
@@ -422,3 +449,5 @@ export async function notifyTicketEvent(ticket, eventType, actorId, extraData = 
     return { sent: 0, failed: 0, total: 0, notifiedUsers: 0, error: err.message };
   }
 }
+
+export { getDepartmentNotifyUsers, resolveNotifyUsers };

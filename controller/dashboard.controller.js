@@ -354,3 +354,97 @@ export const getActivity = async (req, res, next) => {
   }
 };
 
+
+/**
+ * GET /api/dashboard/calendar-summary
+ * Calendar summary: ticket counts and recent tickets grouped by date within a range
+ * Query params: dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)
+ */
+export const getCalendarSummary = async (req, res, next) => {
+  try {
+    const filter = ticketAccessFilter(req.user);
+
+    const { dateFrom, dateTo } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({
+        success: false,
+        message: 'dateFrom and dateTo query parameters are required (YYYY-MM-DD)'
+      });
+    }
+
+    const startDate = new Date(dateFrom);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const endDate = new Date(dateTo);
+    endDate.setUTCHours(23, 59, 59, 999);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Use YYYY-MM-DD'
+      });
+    }
+
+    if (startDate > endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'dateFrom must be before or equal to dateTo'
+      });
+    }
+
+    const dateFilter = {
+      ...filter,
+      createdAt: { $gte: startDate, $lte: endDate }
+    };
+
+    const results = await Ticket.aggregate([
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
+          tickets: { $push: {
+            _id: '$_id',
+            ticketNumber: '$ticketNumber',
+            subject: '$subject',
+            status: '$status',
+            priority: '$priority',
+            createdAt: '$createdAt'
+          }}
+        }
+      },
+      { $sort: { _id: -1 } }
+    ]);
+
+    const data = {};
+    const current = new Date(startDate);
+    while (current <= endDate) {
+      const dateStr = current.toISOString().split('T')[0];
+      data[dateStr] = { count: 0, recentTickets: [] };
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+
+    results.forEach((r) => {
+      data[r._id] = {
+        count: r.count,
+        recentTickets: r.tickets.slice(0, 3).map((t) => ({
+          id: t._id.toString(),
+          ticketNumber: t.ticketNumber,
+          subject: t.subject,
+          status: t.status,
+          priority: t.priority,
+          createdAt: t.createdAt
+        }))
+      };
+    });
+
+    return res.json({
+      success: true,
+      message: 'Calendar summary fetched successfully',
+      data
+    });
+  } catch (err) {
+    next(err);
+  }
+};
